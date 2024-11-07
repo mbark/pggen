@@ -2,10 +2,10 @@ package golang
 
 import (
 	"fmt"
-	"github.com/jschaf/pggen/internal/casing"
-	"github.com/jschaf/pggen/internal/codegen"
-	"github.com/jschaf/pggen/internal/codegen/golang/gotype"
-	"github.com/jschaf/pggen/internal/gomod"
+	"github.com/mbark/pggen/internal/casing"
+	"github.com/mbark/pggen/internal/codegen"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
+	"github.com/mbark/pggen/internal/gomod"
 	"strconv"
 	"strings"
 	"unicode"

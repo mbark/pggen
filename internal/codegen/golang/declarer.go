@@ -1,7 +1,7 @@
 package golang
 
 import (
-	"github.com/jschaf/pggen/internal/codegen/golang/gotype"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 	"sort"
 )
 

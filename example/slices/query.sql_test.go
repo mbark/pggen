@@ -3,9 +3,9 @@ package slices
 import (
 	"context"
 	"github.com/jackc/pgx/v4"
-	"github.com/jschaf/pggen/internal/difftest"
-	"github.com/jschaf/pggen/internal/errs"
-	"github.com/jschaf/pggen/internal/pgtest"
+	"github.com/mbark/pggen/internal/difftest"
+	"github.com/mbark/pggen/internal/errs"
+	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"

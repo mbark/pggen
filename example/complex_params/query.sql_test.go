@@ -3,7 +3,7 @@ package complex_params
 import (
 	"context"
 	"github.com/jackc/pgx/v4"
-	"github.com/jschaf/pggen/internal/pgtest"
+	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"testing"

@@ -5,9 +5,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/jackc/pgtype"
-	"github.com/jschaf/pggen/internal/pg/pgoid"
-	"github.com/jschaf/pggen/internal/pgtest"
-	"github.com/jschaf/pggen/internal/texts"
+	"github.com/mbark/pggen/internal/pg/pgoid"
+	"github.com/mbark/pggen/internal/pgtest"
+	"github.com/mbark/pggen/internal/texts"
 	"sort"
 	"testing"
 )

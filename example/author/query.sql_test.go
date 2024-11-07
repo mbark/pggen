@@ -3,13 +3,13 @@ package author
 import (
 	"context"
 	"errors"
-	"github.com/jschaf/pggen/internal/errs"
-	"github.com/jschaf/pggen/internal/ptrs"
+	"github.com/mbark/pggen/internal/errs"
+	"github.com/mbark/pggen/internal/ptrs"
 	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/jackc/pgx/v4"
-	"github.com/jschaf/pggen/internal/pgtest"
+	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -172,7 +172,7 @@ func TestNewQuerier_InsertAuthorSuffix(t *testing.T) {
 			AuthorID:  author.AuthorID,
 			FirstName: "ulysses",
 			LastName:  "grant",
-			Suffix:    &empty, // TODO: should be nil, https://github.com/jschaf/pggen/issues/21
+			Suffix:    &empty, // TODO: should be nil, https://github.com/mbark/pggen/issues/21
 		}
 		assert.Equal(t, want, author)
 	})

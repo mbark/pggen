@@ -54,7 +54,7 @@ type Querier interface {
 	// FindManyDeviceArrayWithNumScan scans the result of an executed FindManyDeviceArrayWithNumBatch query.
 	FindManyDeviceArrayWithNumScan(results pgx.BatchResults) ([]FindManyDeviceArrayWithNumRow, error)
 
-	// Regression test for https://github.com/jschaf/pggen/issues/23.
+	// Regression test for https://github.com/mbark/pggen/issues/23.
 	EnumInsideComposite(ctx context.Context) (Device, error)
 	// EnumInsideCompositeBatch enqueues a EnumInsideComposite query into batch to be executed
 	// later by the batch.

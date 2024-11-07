@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4"
-	"github.com/jschaf/pggen/internal/texts"
+	"github.com/mbark/pggen/internal/texts"
 	"strconv"
 	"strings"
 	"sync"

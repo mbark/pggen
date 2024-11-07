@@ -2,7 +2,7 @@ package void
 
 import (
 	"context"
-	"github.com/jschaf/pggen/internal/pgtest"
+	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

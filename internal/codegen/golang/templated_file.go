@@ -2,9 +2,9 @@ package golang
 
 import (
 	"fmt"
-	"github.com/jschaf/pggen/internal/ast"
-	"github.com/jschaf/pggen/internal/codegen/golang/gotype"
-	"github.com/jschaf/pggen/internal/pginfer"
+	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
+	"github.com/mbark/pggen/internal/pginfer"
 	"strconv"
 	"strings"
 )
