@@ -53,8 +53,22 @@ func TestNewQuerier_FindOrdersByCustomer(t *testing.T) {
 func TestNewQuerier_QuerierMatchesDBQuerier(t *testing.T) {
 	var q Querier = NewQuerier(nil)
 	require.NotNil(t, q.FindOrdersByCustomer)
+	require.NotNil(t, q.FindOrdersByCustomerBatch)
+	require.NotNil(t, q.FindOrdersByCustomerScan)
+
 	require.NotNil(t, q.FindProductsInOrder)
+	require.NotNil(t, q.FindProductsInOrderBatch)
+	require.NotNil(t, q.FindProductsInOrderScan)
+
 	require.NotNil(t, q.InsertOrder)
+	require.NotNil(t, q.InsertOrderBatch)
+	require.NotNil(t, q.InsertOrderScan)
+
 	require.NotNil(t, q.FindOrdersByPrice)
+	require.NotNil(t, q.FindOrdersByPriceBatch)
+	require.NotNil(t, q.FindOrdersByPriceScan)
+
 	require.NotNil(t, q.FindOrdersMRR)
+	require.NotNil(t, q.FindOrdersMRRBatch)
+	require.NotNil(t, q.FindOrdersMRRScan)
 }

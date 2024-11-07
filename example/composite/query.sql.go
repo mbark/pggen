@@ -11,16 +11,45 @@ import (
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
+//
+// Methods ending with Batch enqueue a query to run later in a pgx.Batch. After
+// calling SendBatch on pgx.Conn, pgxpool.Pool, or pgx.Tx, use the Scan methods
+// to parse the results.
 type Querier interface {
 	SearchScreenshots(ctx context.Context, params SearchScreenshotsParams) ([]SearchScreenshotsRow, error)
+	// SearchScreenshotsBatch enqueues a SearchScreenshots query into batch to be executed
+	// later by the batch.
+	SearchScreenshotsBatch(batch genericBatch, params SearchScreenshotsParams)
+	// SearchScreenshotsScan scans the result of an executed SearchScreenshotsBatch query.
+	SearchScreenshotsScan(results pgx.BatchResults) ([]SearchScreenshotsRow, error)
 
 	SearchScreenshotsOneCol(ctx context.Context, params SearchScreenshotsOneColParams) ([][]Blocks, error)
+	// SearchScreenshotsOneColBatch enqueues a SearchScreenshotsOneCol query into batch to be executed
+	// later by the batch.
+	SearchScreenshotsOneColBatch(batch genericBatch, params SearchScreenshotsOneColParams)
+	// SearchScreenshotsOneColScan scans the result of an executed SearchScreenshotsOneColBatch query.
+	SearchScreenshotsOneColScan(results pgx.BatchResults) ([][]Blocks, error)
 
 	InsertScreenshotBlocks(ctx context.Context, screenshotID int, body string) (InsertScreenshotBlocksRow, error)
+	// InsertScreenshotBlocksBatch enqueues a InsertScreenshotBlocks query into batch to be executed
+	// later by the batch.
+	InsertScreenshotBlocksBatch(batch genericBatch, screenshotID int, body string)
+	// InsertScreenshotBlocksScan scans the result of an executed InsertScreenshotBlocksBatch query.
+	InsertScreenshotBlocksScan(results pgx.BatchResults) (InsertScreenshotBlocksRow, error)
 
 	ArraysInput(ctx context.Context, arrays Arrays) (Arrays, error)
+	// ArraysInputBatch enqueues a ArraysInput query into batch to be executed
+	// later by the batch.
+	ArraysInputBatch(batch genericBatch, arrays Arrays)
+	// ArraysInputScan scans the result of an executed ArraysInputBatch query.
+	ArraysInputScan(results pgx.BatchResults) (Arrays, error)
 
 	UserEmails(ctx context.Context) (UserEmail, error)
+	// UserEmailsBatch enqueues a UserEmails query into batch to be executed
+	// later by the batch.
+	UserEmailsBatch(batch genericBatch)
+	// UserEmailsScan scans the result of an executed UserEmailsBatch query.
+	UserEmailsScan(results pgx.BatchResults) (UserEmail, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -37,7 +66,16 @@ type genericConn interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-// NewQuerier creates a DBQuerier that implements Querier.
+// genericBatch batches queries to send in a single network request to a
+// Postgres server. This is usually backed by *pgx.Batch.
+type genericBatch interface {
+	// Queue queues a query to batch b. query can be an SQL query or the name of a
+	// prepared statement. See Queue on *pgx.Batch.
+	Queue(query string, arguments ...interface{})
+}
+
+// NewQuerier creates a DBQuerier that implements Querier. conn is typically
+// *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn, types: newTypeResolver()}
 }
@@ -256,6 +294,36 @@ func (q *DBQuerier) SearchScreenshots(ctx context.Context, params SearchScreensh
 	return items, err
 }
 
+// SearchScreenshotsBatch implements Querier.SearchScreenshotsBatch.
+func (q *DBQuerier) SearchScreenshotsBatch(batch genericBatch, params SearchScreenshotsParams) {
+	batch.Queue(searchScreenshotsSQL, params.Body, params.Limit, params.Offset)
+}
+
+// SearchScreenshotsScan implements Querier.SearchScreenshotsScan.
+func (q *DBQuerier) SearchScreenshotsScan(results pgx.BatchResults) ([]SearchScreenshotsRow, error) {
+	rows, err := results.Query()
+	if err != nil {
+		return nil, fmt.Errorf("query SearchScreenshotsBatch: %w", err)
+	}
+	defer rows.Close()
+	items := []SearchScreenshotsRow{}
+	blocksArray := q.types.newBlocksArray()
+	for rows.Next() {
+		var item SearchScreenshotsRow
+		if err := rows.Scan(&item.ID, blocksArray); err != nil {
+			return nil, fmt.Errorf("scan SearchScreenshotsBatch row: %w", err)
+		}
+		if err := blocksArray.AssignTo(&item.Blocks); err != nil {
+			return nil, fmt.Errorf("assign SearchScreenshots row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("close SearchScreenshotsBatch rows: %w", err)
+	}
+	return items, err
+}
+
 const searchScreenshotsOneColSQL = `SELECT
   array_agg(bl) AS blocks
 FROM screenshots ss
@@ -297,6 +365,36 @@ func (q *DBQuerier) SearchScreenshotsOneCol(ctx context.Context, params SearchSc
 	return items, err
 }
 
+// SearchScreenshotsOneColBatch implements Querier.SearchScreenshotsOneColBatch.
+func (q *DBQuerier) SearchScreenshotsOneColBatch(batch genericBatch, params SearchScreenshotsOneColParams) {
+	batch.Queue(searchScreenshotsOneColSQL, params.Body, params.Limit, params.Offset)
+}
+
+// SearchScreenshotsOneColScan implements Querier.SearchScreenshotsOneColScan.
+func (q *DBQuerier) SearchScreenshotsOneColScan(results pgx.BatchResults) ([][]Blocks, error) {
+	rows, err := results.Query()
+	if err != nil {
+		return nil, fmt.Errorf("query SearchScreenshotsOneColBatch: %w", err)
+	}
+	defer rows.Close()
+	items := [][]Blocks{}
+	blocksArray := q.types.newBlocksArray()
+	for rows.Next() {
+		var item []Blocks
+		if err := rows.Scan(blocksArray); err != nil {
+			return nil, fmt.Errorf("scan SearchScreenshotsOneColBatch row: %w", err)
+		}
+		if err := blocksArray.AssignTo(&item); err != nil {
+			return nil, fmt.Errorf("assign SearchScreenshotsOneCol row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("close SearchScreenshotsOneColBatch rows: %w", err)
+	}
+	return items, err
+}
+
 const insertScreenshotBlocksSQL = `WITH screens AS (
   INSERT INTO screenshots (id) VALUES ($1)
     ON CONFLICT DO NOTHING
@@ -323,6 +421,21 @@ func (q *DBQuerier) InsertScreenshotBlocks(ctx context.Context, screenshotID int
 	return item, nil
 }
 
+// InsertScreenshotBlocksBatch implements Querier.InsertScreenshotBlocksBatch.
+func (q *DBQuerier) InsertScreenshotBlocksBatch(batch genericBatch, screenshotID int, body string) {
+	batch.Queue(insertScreenshotBlocksSQL, screenshotID, body)
+}
+
+// InsertScreenshotBlocksScan implements Querier.InsertScreenshotBlocksScan.
+func (q *DBQuerier) InsertScreenshotBlocksScan(results pgx.BatchResults) (InsertScreenshotBlocksRow, error) {
+	row := results.QueryRow()
+	var item InsertScreenshotBlocksRow
+	if err := row.Scan(&item.ID, &item.ScreenshotID, &item.Body); err != nil {
+		return item, fmt.Errorf("scan InsertScreenshotBlocksBatch row: %w", err)
+	}
+	return item, nil
+}
+
 const arraysInputSQL = `SELECT $1::arrays;`
 
 // ArraysInput implements Querier.ArraysInput.
@@ -340,6 +453,25 @@ func (q *DBQuerier) ArraysInput(ctx context.Context, arrays Arrays) (Arrays, err
 	return item, nil
 }
 
+// ArraysInputBatch implements Querier.ArraysInputBatch.
+func (q *DBQuerier) ArraysInputBatch(batch genericBatch, arrays Arrays) {
+	batch.Queue(arraysInputSQL, q.types.newArraysInit(arrays))
+}
+
+// ArraysInputScan implements Querier.ArraysInputScan.
+func (q *DBQuerier) ArraysInputScan(results pgx.BatchResults) (Arrays, error) {
+	row := results.QueryRow()
+	var item Arrays
+	arraysRow := q.types.newArrays()
+	if err := row.Scan(arraysRow); err != nil {
+		return item, fmt.Errorf("scan ArraysInputBatch row: %w", err)
+	}
+	if err := arraysRow.AssignTo(&item); err != nil {
+		return item, fmt.Errorf("assign ArraysInput row: %w", err)
+	}
+	return item, nil
+}
+
 const userEmailsSQL = `SELECT ('foo', 'bar@example.com')::user_email;`
 
 // UserEmails implements Querier.UserEmails.
@@ -350,6 +482,25 @@ func (q *DBQuerier) UserEmails(ctx context.Context) (UserEmail, error) {
 	rowRow := q.types.newUserEmail()
 	if err := row.Scan(rowRow); err != nil {
 		return item, fmt.Errorf("query UserEmails: %w", err)
+	}
+	if err := rowRow.AssignTo(&item); err != nil {
+		return item, fmt.Errorf("assign UserEmails row: %w", err)
+	}
+	return item, nil
+}
+
+// UserEmailsBatch implements Querier.UserEmailsBatch.
+func (q *DBQuerier) UserEmailsBatch(batch genericBatch) {
+	batch.Queue(userEmailsSQL)
+}
+
+// UserEmailsScan implements Querier.UserEmailsScan.
+func (q *DBQuerier) UserEmailsScan(results pgx.BatchResults) (UserEmail, error) {
+	row := results.QueryRow()
+	var item UserEmail
+	rowRow := q.types.newUserEmail()
+	if err := row.Scan(rowRow); err != nil {
+		return item, fmt.Errorf("scan UserEmailsBatch row: %w", err)
 	}
 	if err := rowRow.AssignTo(&item); err != nil {
 		return item, fmt.Errorf("assign UserEmails row: %w", err)

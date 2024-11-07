@@ -2,6 +2,8 @@ package go_pointer_types
 
 import (
 	"context"
+	"github.com/jackc/pgx/v4"
+	"github.com/jschaf/pggen/internal/errs"
 	"github.com/jschaf/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +19,17 @@ func TestQuerier_GenSeries1(t *testing.T) {
 
 	t.Run("GenSeries1", func(t *testing.T) {
 		got, err := q.GenSeries1(ctx)
+		require.NoError(t, err)
+		zero := 0
+		assert.Equal(t, &zero, got)
+	})
+
+	t.Run("GenSeries1Batch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeries1Batch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeries1Scan(results)
 		require.NoError(t, err)
 		zero := 0
 		assert.Equal(t, &zero, got)
@@ -38,6 +51,17 @@ func TestQuerier_GenSeries(t *testing.T) {
 		zero, one, two := 0, 1, 2
 		assert.Equal(t, []*int{&zero, &one, &two}, got)
 	})
+
+	t.Run("GenSeriesBatch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeriesBatch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeriesScan(results)
+		require.NoError(t, err)
+		zero, one, two := 0, 1, 2
+		assert.Equal(t, []*int{&zero, &one, &two}, got)
+	})
 }
 
 func TestQuerier_GenSeriesArr1(t *testing.T) {
@@ -52,6 +76,18 @@ func TestQuerier_GenSeriesArr1(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []int{0, 1, 2}, got)
 	})
+
+	t.Run("GenSeriesArr1Batch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeriesArr1Batch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeriesArr1Scan(results)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, []int{0, 1, 2}, got)
+	})
 }
 
 func TestQuerier_GenSeriesArr(t *testing.T) {
@@ -64,6 +100,16 @@ func TestQuerier_GenSeriesArr(t *testing.T) {
 	t.Run("GenSeriesArr", func(t *testing.T) {
 		got, err := q.GenSeriesArr(ctx)
 		require.NoError(t, err)
+		assert.Equal(t, [][]int{{0, 1, 2}}, got)
+	})
+
+	t.Run("GenSeriesArrBatch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeriesArrBatch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeriesArrScan(results)
+		require.Nil(t, err)
 		assert.Equal(t, [][]int{{0, 1, 2}}, got)
 	})
 }
@@ -82,8 +128,30 @@ func TestQuerier_GenSeriesStr(t *testing.T) {
 		assert.Equal(t, &zero, got)
 	})
 
+	t.Run("GenSeriesStr1Batch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeriesStr1Batch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeriesStr1Scan(results)
+		require.NoError(t, err)
+		zero := "0"
+		assert.Equal(t, &zero, got)
+	})
+
 	t.Run("GenSeriesStr", func(t *testing.T) {
 		got, err := q.GenSeriesStr(ctx)
+		require.NoError(t, err)
+		zero, one, two := "0", "1", "2"
+		assert.Equal(t, []*string{&zero, &one, &two}, got)
+	})
+
+	t.Run("GenSeriesStrBatch", func(t *testing.T) {
+		batch := &pgx.Batch{}
+		q.GenSeriesStrBatch(batch)
+		results := conn.SendBatch(ctx, batch)
+		defer errs.CaptureT(t, results.Close, "close batch")
+		got, err := q.GenSeriesStrScan(results)
 		require.NoError(t, err)
 		zero, one, two := "0", "1", "2"
 		assert.Equal(t, []*string{&zero, &one, &two}, got)

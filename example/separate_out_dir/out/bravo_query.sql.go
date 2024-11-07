@@ -5,6 +5,7 @@ package out
 import (
 	"context"
 	"fmt"
+	"github.com/jackc/pgx/v4"
 )
 
 const bravoSQL = `SELECT 'bravo' as output;`
@@ -16,6 +17,21 @@ func (q *DBQuerier) Bravo(ctx context.Context) (string, error) {
 	var item string
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query Bravo: %w", err)
+	}
+	return item, nil
+}
+
+// BravoBatch implements Querier.BravoBatch.
+func (q *DBQuerier) BravoBatch(batch genericBatch) {
+	batch.Queue(bravoSQL)
+}
+
+// BravoScan implements Querier.BravoScan.
+func (q *DBQuerier) BravoScan(results pgx.BatchResults) (string, error) {
+	row := results.QueryRow()
+	var item string
+	if err := row.Scan(&item); err != nil {
+		return item, fmt.Errorf("scan BravoBatch row: %w", err)
 	}
 	return item, nil
 }

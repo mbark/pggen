@@ -11,14 +11,38 @@ import (
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
+//
+// Methods ending with Batch enqueue a query to run later in a pgx.Batch. After
+// calling SendBatch on pgx.Conn, pgxpool.Pool, or pgx.Tx, use the Scan methods
+// to parse the results.
 type Querier interface {
 	AlphaNested(ctx context.Context) (string, error)
+	// AlphaNestedBatch enqueues a AlphaNested query into batch to be executed
+	// later by the batch.
+	AlphaNestedBatch(batch genericBatch)
+	// AlphaNestedScan scans the result of an executed AlphaNestedBatch query.
+	AlphaNestedScan(results pgx.BatchResults) (string, error)
 
 	AlphaCompositeArray(ctx context.Context) ([]Alpha, error)
+	// AlphaCompositeArrayBatch enqueues a AlphaCompositeArray query into batch to be executed
+	// later by the batch.
+	AlphaCompositeArrayBatch(batch genericBatch)
+	// AlphaCompositeArrayScan scans the result of an executed AlphaCompositeArrayBatch query.
+	AlphaCompositeArrayScan(results pgx.BatchResults) ([]Alpha, error)
 
 	Alpha(ctx context.Context) (string, error)
+	// AlphaBatch enqueues a Alpha query into batch to be executed
+	// later by the batch.
+	AlphaBatch(batch genericBatch)
+	// AlphaScan scans the result of an executed AlphaBatch query.
+	AlphaScan(results pgx.BatchResults) (string, error)
 
 	Bravo(ctx context.Context) (string, error)
+	// BravoBatch enqueues a Bravo query into batch to be executed
+	// later by the batch.
+	BravoBatch(batch genericBatch)
+	// BravoScan scans the result of an executed BravoBatch query.
+	BravoScan(results pgx.BatchResults) (string, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -35,7 +59,16 @@ type genericConn interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-// NewQuerier creates a DBQuerier that implements Querier.
+// genericBatch batches queries to send in a single network request to a
+// Postgres server. This is usually backed by *pgx.Batch.
+type genericBatch interface {
+	// Queue queues a query to batch b. query can be an SQL query or the name of a
+	// prepared statement. See Queue on *pgx.Batch.
+	Queue(query string, arguments ...interface{})
+}
+
+// NewQuerier creates a DBQuerier that implements Querier. conn is typically
+// *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn, types: newTypeResolver()}
 }
@@ -153,6 +186,21 @@ func (q *DBQuerier) AlphaNested(ctx context.Context) (string, error) {
 	return item, nil
 }
 
+// AlphaNestedBatch implements Querier.AlphaNestedBatch.
+func (q *DBQuerier) AlphaNestedBatch(batch genericBatch) {
+	batch.Queue(alphaNestedSQL)
+}
+
+// AlphaNestedScan implements Querier.AlphaNestedScan.
+func (q *DBQuerier) AlphaNestedScan(results pgx.BatchResults) (string, error) {
+	row := results.QueryRow()
+	var item string
+	if err := row.Scan(&item); err != nil {
+		return item, fmt.Errorf("scan AlphaNestedBatch row: %w", err)
+	}
+	return item, nil
+}
+
 const alphaCompositeArraySQL = `SELECT ARRAY[ROW('key')]::alpha[];`
 
 // AlphaCompositeArray implements Querier.AlphaCompositeArray.
@@ -163,6 +211,25 @@ func (q *DBQuerier) AlphaCompositeArray(ctx context.Context) ([]Alpha, error) {
 	arrayArray := q.types.newAlphaArray()
 	if err := row.Scan(arrayArray); err != nil {
 		return item, fmt.Errorf("query AlphaCompositeArray: %w", err)
+	}
+	if err := arrayArray.AssignTo(&item); err != nil {
+		return item, fmt.Errorf("assign AlphaCompositeArray row: %w", err)
+	}
+	return item, nil
+}
+
+// AlphaCompositeArrayBatch implements Querier.AlphaCompositeArrayBatch.
+func (q *DBQuerier) AlphaCompositeArrayBatch(batch genericBatch) {
+	batch.Queue(alphaCompositeArraySQL)
+}
+
+// AlphaCompositeArrayScan implements Querier.AlphaCompositeArrayScan.
+func (q *DBQuerier) AlphaCompositeArrayScan(results pgx.BatchResults) ([]Alpha, error) {
+	row := results.QueryRow()
+	item := []Alpha{}
+	arrayArray := q.types.newAlphaArray()
+	if err := row.Scan(arrayArray); err != nil {
+		return item, fmt.Errorf("scan AlphaCompositeArrayBatch row: %w", err)
 	}
 	if err := arrayArray.AssignTo(&item); err != nil {
 		return item, fmt.Errorf("assign AlphaCompositeArray row: %w", err)

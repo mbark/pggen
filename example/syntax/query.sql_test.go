@@ -2,6 +2,7 @@ package syntax
 
 import (
 	"context"
+	"github.com/jackc/pgx/v4"
 	"github.com/jschaf/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -32,4 +33,32 @@ func TestQuerier(t *testing.T) {
 	val, err = q.BacktickBackslashN(ctx)
 	assert.NoError(t, err, "BacktickBackslashN")
 	assert.Equal(t, "`\\n", val, "BacktickBackslashN")
+
+	batch := &pgx.Batch{}
+	q.BacktickBatch(batch)
+	q.BacktickDoubleQuoteBatch(batch)
+	q.BacktickQuoteBacktickBatch(batch)
+	q.BacktickNewlineBatch(batch)
+	q.BacktickBackslashNBatch(batch)
+	results := conn.SendBatch(ctx, batch)
+
+	val, err = q.BacktickScan(results)
+	assert.NoError(t, err, "BacktickScan")
+	assert.Equal(t, "`", val, "BacktickScan")
+
+	val, err = q.BacktickDoubleQuoteScan(results)
+	assert.NoError(t, err, "BacktickDoubleQuoteScan")
+	assert.Equal(t, "`\"", val, "BacktickDoubleQuoteScan")
+
+	val, err = q.BacktickQuoteBacktickScan(results)
+	assert.NoError(t, err, "BacktickQuoteBacktickScan")
+	assert.Equal(t, "`\"`", val, "BacktickQuoteBacktickScan")
+
+	val, err = q.BacktickNewlineScan(results)
+	assert.NoError(t, err, "BacktickNewlineScan")
+	assert.Equal(t, "`\n", val, "BacktickNewlineScan")
+
+	val, err = q.BacktickBackslashNScan(results)
+	assert.NoError(t, err, "BacktickBackslashNScan")
+	assert.Equal(t, "`\\n", val, "BacktickBackslashNScan")
 }

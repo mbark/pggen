@@ -12,12 +12,31 @@ import (
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
+//
+// Methods ending with Batch enqueue a query to run later in a pgx.Batch. After
+// calling SendBatch on pgx.Conn, pgxpool.Pool, or pgx.Tx, use the Scan methods
+// to parse the results.
 type Querier interface {
 	CustomTypes(ctx context.Context) (CustomTypesRow, error)
+	// CustomTypesBatch enqueues a CustomTypes query into batch to be executed
+	// later by the batch.
+	CustomTypesBatch(batch genericBatch)
+	// CustomTypesScan scans the result of an executed CustomTypesBatch query.
+	CustomTypesScan(results pgx.BatchResults) (CustomTypesRow, error)
 
 	CustomMyInt(ctx context.Context) (int, error)
+	// CustomMyIntBatch enqueues a CustomMyInt query into batch to be executed
+	// later by the batch.
+	CustomMyIntBatch(batch genericBatch)
+	// CustomMyIntScan scans the result of an executed CustomMyIntBatch query.
+	CustomMyIntScan(results pgx.BatchResults) (int, error)
 
 	IntArray(ctx context.Context) ([][]int32, error)
+	// IntArrayBatch enqueues a IntArray query into batch to be executed
+	// later by the batch.
+	IntArrayBatch(batch genericBatch)
+	// IntArrayScan scans the result of an executed IntArrayBatch query.
+	IntArrayScan(results pgx.BatchResults) ([][]int32, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -34,7 +53,16 @@ type genericConn interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 }
 
-// NewQuerier creates a DBQuerier that implements Querier.
+// genericBatch batches queries to send in a single network request to a
+// Postgres server. This is usually backed by *pgx.Batch.
+type genericBatch interface {
+	// Queue queues a query to batch b. query can be an SQL query or the name of a
+	// prepared statement. See Queue on *pgx.Batch.
+	Queue(query string, arguments ...interface{})
+}
+
+// NewQuerier creates a DBQuerier that implements Querier. conn is typically
+// *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn, types: newTypeResolver()}
 }
@@ -86,6 +114,21 @@ func (q *DBQuerier) CustomTypes(ctx context.Context) (CustomTypesRow, error) {
 	return item, nil
 }
 
+// CustomTypesBatch implements Querier.CustomTypesBatch.
+func (q *DBQuerier) CustomTypesBatch(batch genericBatch) {
+	batch.Queue(customTypesSQL)
+}
+
+// CustomTypesScan implements Querier.CustomTypesScan.
+func (q *DBQuerier) CustomTypesScan(results pgx.BatchResults) (CustomTypesRow, error) {
+	row := results.QueryRow()
+	var item CustomTypesRow
+	if err := row.Scan(&item.Column, &item.Int8); err != nil {
+		return item, fmt.Errorf("scan CustomTypesBatch row: %w", err)
+	}
+	return item, nil
+}
+
 const customMyIntSQL = `SELECT '5'::my_int as int5;`
 
 // CustomMyInt implements Querier.CustomMyInt.
@@ -95,6 +138,21 @@ func (q *DBQuerier) CustomMyInt(ctx context.Context) (int, error) {
 	var item int
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query CustomMyInt: %w", err)
+	}
+	return item, nil
+}
+
+// CustomMyIntBatch implements Querier.CustomMyIntBatch.
+func (q *DBQuerier) CustomMyIntBatch(batch genericBatch) {
+	batch.Queue(customMyIntSQL)
+}
+
+// CustomMyIntScan implements Querier.CustomMyIntScan.
+func (q *DBQuerier) CustomMyIntScan(results pgx.BatchResults) (int, error) {
+	row := results.QueryRow()
+	var item int
+	if err := row.Scan(&item); err != nil {
+		return item, fmt.Errorf("scan CustomMyIntBatch row: %w", err)
 	}
 	return item, nil
 }
@@ -119,6 +177,32 @@ func (q *DBQuerier) IntArray(ctx context.Context) ([][]int32, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("close IntArray rows: %w", err)
+	}
+	return items, err
+}
+
+// IntArrayBatch implements Querier.IntArrayBatch.
+func (q *DBQuerier) IntArrayBatch(batch genericBatch) {
+	batch.Queue(intArraySQL)
+}
+
+// IntArrayScan implements Querier.IntArrayScan.
+func (q *DBQuerier) IntArrayScan(results pgx.BatchResults) ([][]int32, error) {
+	rows, err := results.Query()
+	if err != nil {
+		return nil, fmt.Errorf("query IntArrayBatch: %w", err)
+	}
+	defer rows.Close()
+	items := [][]int32{}
+	for rows.Next() {
+		var item []int32
+		if err := rows.Scan(&item); err != nil {
+			return nil, fmt.Errorf("scan IntArrayBatch row: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("close IntArrayBatch rows: %w", err)
 	}
 	return items, err
 }
