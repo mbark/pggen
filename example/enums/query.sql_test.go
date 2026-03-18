@@ -2,8 +2,7 @@ package enums
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +28,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypeIot},
+				{Mac: mac, Type: DeviceTypeIot},
 			},
 			devices,
 		)
@@ -44,7 +43,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypeIot},
+				{Mac: mac, Type: DeviceTypeIot},
 			},
 			devices,
 		)
@@ -155,7 +154,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideComposite(ctx)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: DeviceTypePhone},
 			device,
 		)
 	})
@@ -168,7 +167,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideCompositeScan(results)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: DeviceTypePhone},
 			device,
 		)
 	})
@@ -177,7 +176,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 func insertDevice(t *testing.T, q *DBQuerier, mac net.HardwareAddr, device DeviceType) {
 	t.Helper()
 	_, err := q.InsertDevice(context.Background(),
-		pgtype.Macaddr{Addr: mac, Status: pgtype.Present},
+		mac,
 		device,
 	)
 	require.NoError(t, err)

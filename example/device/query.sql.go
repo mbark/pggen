@@ -5,9 +5,9 @@ package device
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
+	"net"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -58,10 +58,10 @@ type Querier interface {
 	// InsertUserScan scans the result of an executed InsertUserBatch query.
 	InsertUserScan(results pgx.BatchResults) (pgconn.CommandTag, error)
 
-	InsertDevice(ctx context.Context, mac pgtype.Macaddr, owner int) (pgconn.CommandTag, error)
+	InsertDevice(ctx context.Context, mac net.HardwareAddr, owner int) (pgconn.CommandTag, error)
 	// InsertDeviceBatch enqueues a InsertDevice query into batch to be executed
 	// later by the batch.
-	InsertDeviceBatch(batch genericBatch, mac pgtype.Macaddr, owner int)
+	InsertDeviceBatch(batch genericBatch, mac net.HardwareAddr, owner int)
 	// InsertDeviceScan scans the result of an executed InsertDeviceBatch query.
 	InsertDeviceScan(results pgx.BatchResults) (pgconn.CommandTag, error)
 }
@@ -69,8 +69,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying Postgres transport to use
-	types *typeResolver // resolve types by name
+	conn genericConn // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -85,13 +84,13 @@ type genericConn interface {
 type genericBatch interface {
 	// Queue queues a query to batch b. query can be an SQL query or the name of a
 	// prepared statement. See Queue on *pgx.Batch.
-	Queue(query string, arguments ...interface{})
+	Queue(query string, arguments ...any) *pgx.QueuedQuery
 }
 
 // NewQuerier creates a DBQuerier that implements Querier. conn is typically
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
-	return &DBQuerier{conn: conn, types: newTypeResolver()}
+	return &DBQuerier{conn: conn}
 }
 
 // User represents the Postgres composite type "user".
@@ -114,96 +113,6 @@ const (
 
 func (d DeviceType) String() string { return string(d) }
 
-// typeResolver looks up the pgtype.ValueTranscoder by Postgres type name.
-type typeResolver struct {
-	connInfo *pgtype.ConnInfo // types by Postgres type name
-}
-
-func newTypeResolver() *typeResolver {
-	ci := pgtype.NewConnInfo()
-	return &typeResolver{connInfo: ci}
-}
-
-// findValue find the OID, and pgtype.ValueTranscoder for a Postgres type name.
-func (tr *typeResolver) findValue(name string) (uint32, pgtype.ValueTranscoder, bool) {
-	typ, ok := tr.connInfo.DataTypeForName(name)
-	if !ok {
-		return 0, nil, false
-	}
-	v := pgtype.NewValue(typ.Value)
-	return typ.OID, v.(pgtype.ValueTranscoder), true
-}
-
-// setValue sets the value of a ValueTranscoder to a value that should always
-// work and panics if it fails.
-func (tr *typeResolver) setValue(vt pgtype.ValueTranscoder, val interface{}) pgtype.ValueTranscoder {
-	if err := vt.Set(val); err != nil {
-		panic(fmt.Sprintf("set ValueTranscoder %T to %+v: %s", vt, val, err))
-	}
-	return vt
-}
-
-type compositeField struct {
-	name       string                 // name of the field
-	typeName   string                 // Postgres type name
-	defaultVal pgtype.ValueTranscoder // default value to use
-}
-
-func (tr *typeResolver) newCompositeValue(name string, fields ...compositeField) pgtype.ValueTranscoder {
-	if _, val, ok := tr.findValue(name); ok {
-		return val
-	}
-	fs := make([]pgtype.CompositeTypeField, len(fields))
-	vals := make([]pgtype.ValueTranscoder, len(fields))
-	isBinaryOk := true
-	for i, field := range fields {
-		oid, val, ok := tr.findValue(field.typeName)
-		if !ok {
-			oid = unknownOID
-			val = field.defaultVal
-		}
-		isBinaryOk = isBinaryOk && oid != unknownOID
-		fs[i] = pgtype.CompositeTypeField{Name: field.name, OID: oid}
-		vals[i] = val
-	}
-	// Okay to ignore error because it's only thrown when the number of field
-	// names does not equal the number of ValueTranscoders.
-	typ, _ := pgtype.NewCompositeTypeValues(name, fs, vals)
-	if !isBinaryOk {
-		return textPreferrer{ValueTranscoder: typ, typeName: name}
-	}
-	return typ
-}
-
-func (tr *typeResolver) newArrayValue(name, elemName string, defaultVal func() pgtype.ValueTranscoder) pgtype.ValueTranscoder {
-	if _, val, ok := tr.findValue(name); ok {
-		return val
-	}
-	elemOID, elemVal, ok := tr.findValue(elemName)
-	elemValFunc := func() pgtype.ValueTranscoder {
-		return pgtype.NewValue(elemVal).(pgtype.ValueTranscoder)
-	}
-	if !ok {
-		elemOID = unknownOID
-		elemValFunc = defaultVal
-	}
-	typ := pgtype.NewArrayType(name, elemOID, elemValFunc)
-	if elemOID == unknownOID {
-		return textPreferrer{ValueTranscoder: typ, typeName: name}
-	}
-	return typ
-}
-
-// newUser creates a new pgtype.ValueTranscoder for the Postgres
-// composite type 'user'.
-func (tr *typeResolver) newUser() pgtype.ValueTranscoder {
-	return tr.newCompositeValue(
-		"user",
-		compositeField{name: "id", typeName: "int8", defaultVal: &pgtype.Int8{}},
-		compositeField{name: "name", typeName: "text", defaultVal: &pgtype.Text{}},
-	)
-}
-
 const findDevicesByUserSQL = `SELECT
   id,
   name,
@@ -214,7 +123,7 @@ WHERE id = $1;`
 type FindDevicesByUserRow struct {
 	ID       int                 `json:"id"`
 	Name     string              `json:"name"`
-	MacAddrs pgtype.MacaddrArray `json:"mac_addrs"`
+	MacAddrs []net.HardwareAddr `json:"mac_addrs"`
 }
 
 // FindDevicesByUser implements Querier.FindDevicesByUser.
@@ -273,7 +182,7 @@ FROM device d
   LEFT JOIN "user" u ON u.id = d.owner;`
 
 type CompositeUserRow struct {
-	Mac  pgtype.Macaddr `json:"mac"`
+	Mac  net.HardwareAddr `json:"mac"`
 	Type DeviceType     `json:"type"`
 	User User           `json:"user"`
 }
@@ -287,14 +196,10 @@ func (q *DBQuerier) CompositeUser(ctx context.Context) ([]CompositeUserRow, erro
 	}
 	defer rows.Close()
 	items := []CompositeUserRow{}
-	userRow := q.types.newUser()
 	for rows.Next() {
 		var item CompositeUserRow
-		if err := rows.Scan(&item.Mac, &item.Type, userRow); err != nil {
+		if err := rows.Scan(&item.Mac, &item.Type, &item.User); err != nil {
 			return nil, fmt.Errorf("scan CompositeUser row: %w", err)
-		}
-		if err := userRow.AssignTo(&item.User); err != nil {
-			return nil, fmt.Errorf("assign CompositeUser row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -317,14 +222,10 @@ func (q *DBQuerier) CompositeUserScan(results pgx.BatchResults) ([]CompositeUser
 	}
 	defer rows.Close()
 	items := []CompositeUserRow{}
-	userRow := q.types.newUser()
 	for rows.Next() {
 		var item CompositeUserRow
-		if err := rows.Scan(&item.Mac, &item.Type, userRow); err != nil {
+		if err := rows.Scan(&item.Mac, &item.Type, &item.User); err != nil {
 			return nil, fmt.Errorf("scan CompositeUserBatch row: %w", err)
-		}
-		if err := userRow.AssignTo(&item.User); err != nil {
-			return nil, fmt.Errorf("assign CompositeUser row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -341,12 +242,8 @@ func (q *DBQuerier) CompositeUserOne(ctx context.Context) (User, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "CompositeUserOne")
 	row := q.conn.QueryRow(ctx, compositeUserOneSQL)
 	var item User
-	userRow := q.types.newUser()
-	if err := row.Scan(userRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query CompositeUserOne: %w", err)
-	}
-	if err := userRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign CompositeUserOne row: %w", err)
 	}
 	return item, nil
 }
@@ -360,12 +257,8 @@ func (q *DBQuerier) CompositeUserOneBatch(batch genericBatch) {
 func (q *DBQuerier) CompositeUserOneScan(results pgx.BatchResults) (User, error) {
 	row := results.QueryRow()
 	var item User
-	userRow := q.types.newUser()
-	if err := row.Scan(userRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("scan CompositeUserOneBatch row: %w", err)
-	}
-	if err := userRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign CompositeUserOne row: %w", err)
 	}
 	return item, nil
 }
@@ -382,12 +275,8 @@ func (q *DBQuerier) CompositeUserOneTwoCols(ctx context.Context) (CompositeUserO
 	ctx = context.WithValue(ctx, "pggen_query_name", "CompositeUserOneTwoCols")
 	row := q.conn.QueryRow(ctx, compositeUserOneTwoColsSQL)
 	var item CompositeUserOneTwoColsRow
-	userRow := q.types.newUser()
-	if err := row.Scan(&item.Num, userRow); err != nil {
+	if err := row.Scan(&item.Num, &item.User); err != nil {
 		return item, fmt.Errorf("query CompositeUserOneTwoCols: %w", err)
-	}
-	if err := userRow.AssignTo(&item.User); err != nil {
-		return item, fmt.Errorf("assign CompositeUserOneTwoCols row: %w", err)
 	}
 	return item, nil
 }
@@ -401,12 +290,8 @@ func (q *DBQuerier) CompositeUserOneTwoColsBatch(batch genericBatch) {
 func (q *DBQuerier) CompositeUserOneTwoColsScan(results pgx.BatchResults) (CompositeUserOneTwoColsRow, error) {
 	row := results.QueryRow()
 	var item CompositeUserOneTwoColsRow
-	userRow := q.types.newUser()
-	if err := row.Scan(&item.Num, userRow); err != nil {
+	if err := row.Scan(&item.Num, &item.User); err != nil {
 		return item, fmt.Errorf("scan CompositeUserOneTwoColsBatch row: %w", err)
-	}
-	if err := userRow.AssignTo(&item.User); err != nil {
-		return item, fmt.Errorf("assign CompositeUserOneTwoCols row: %w", err)
 	}
 	return item, nil
 }
@@ -422,14 +307,10 @@ func (q *DBQuerier) CompositeUserMany(ctx context.Context) ([]User, error) {
 	}
 	defer rows.Close()
 	items := []User{}
-	userRow := q.types.newUser()
 	for rows.Next() {
 		var item User
-		if err := rows.Scan(userRow); err != nil {
+		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan CompositeUserMany row: %w", err)
-		}
-		if err := userRow.AssignTo(&item); err != nil {
-			return nil, fmt.Errorf("assign CompositeUserMany row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -452,14 +333,10 @@ func (q *DBQuerier) CompositeUserManyScan(results pgx.BatchResults) ([]User, err
 	}
 	defer rows.Close()
 	items := []User{}
-	userRow := q.types.newUser()
 	for rows.Next() {
 		var item User
-		if err := rows.Scan(userRow); err != nil {
+		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan CompositeUserManyBatch row: %w", err)
-		}
-		if err := userRow.AssignTo(&item); err != nil {
-			return nil, fmt.Errorf("assign CompositeUserMany row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -500,7 +377,7 @@ const insertDeviceSQL = `INSERT INTO device (mac, owner)
 VALUES ($1, $2);`
 
 // InsertDevice implements Querier.InsertDevice.
-func (q *DBQuerier) InsertDevice(ctx context.Context, mac pgtype.Macaddr, owner int) (pgconn.CommandTag, error) {
+func (q *DBQuerier) InsertDevice(ctx context.Context, mac net.HardwareAddr, owner int) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertDevice")
 	cmdTag, err := q.conn.Exec(ctx, insertDeviceSQL, mac, owner)
 	if err != nil {
@@ -510,7 +387,7 @@ func (q *DBQuerier) InsertDevice(ctx context.Context, mac pgtype.Macaddr, owner 
 }
 
 // InsertDeviceBatch implements Querier.InsertDeviceBatch.
-func (q *DBQuerier) InsertDeviceBatch(batch genericBatch, mac pgtype.Macaddr, owner int) {
+func (q *DBQuerier) InsertDeviceBatch(batch genericBatch, mac net.HardwareAddr, owner int) {
 	batch.Queue(insertDeviceSQL, mac, owner)
 }
 
@@ -523,27 +400,3 @@ func (q *DBQuerier) InsertDeviceScan(results pgx.BatchResults) (pgconn.CommandTa
 	return cmdTag, err
 }
 
-// textPreferrer wraps a pgtype.ValueTranscoder and sets the preferred encoding
-// format to text instead binary (the default). pggen uses the text format
-// when the OID is unknownOID because the binary format requires the OID.
-// Typically occurs for unregistered types.
-type textPreferrer struct {
-	pgtype.ValueTranscoder
-	typeName string
-}
-
-// PreferredParamFormat implements pgtype.ParamFormatPreferrer.
-func (t textPreferrer) PreferredParamFormat() int16 { return pgtype.TextFormatCode }
-
-func (t textPreferrer) NewTypeValue() pgtype.Value {
-	return textPreferrer{ValueTranscoder: pgtype.NewValue(t.ValueTranscoder).(pgtype.ValueTranscoder), typeName: t.typeName}
-}
-
-func (t textPreferrer) TypeName() string {
-	return t.typeName
-}
-
-// unknownOID means we don't know the OID for a type. This is okay for decoding
-// because pgx call DecodeText or DecodeBinary without requiring the OID. For
-// encoding parameters, pggen uses textPreferrer if the OID is unknown.
-const unknownOID = 0

@@ -5,9 +5,9 @@ package composite
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -55,8 +55,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying Postgres transport to use
-	types *typeResolver // resolve types by name
+	conn genericConn // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -71,13 +70,13 @@ type genericConn interface {
 type genericBatch interface {
 	// Queue queues a query to batch b. query can be an SQL query or the name of a
 	// prepared statement. See Queue on *pgx.Batch.
-	Queue(query string, arguments ...interface{})
+	Queue(query string, arguments ...any) *pgx.QueuedQuery
 }
 
 // NewQuerier creates a DBQuerier that implements Querier. conn is typically
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
-	return &DBQuerier{conn: conn, types: newTypeResolver()}
+	return &DBQuerier{conn: conn}
 }
 
 // Arrays represents the Postgres composite type "arrays".
@@ -99,152 +98,6 @@ type Blocks struct {
 type UserEmail struct {
 	ID    string      `json:"id"`
 	Email pgtype.Text `json:"email"`
-}
-
-// typeResolver looks up the pgtype.ValueTranscoder by Postgres type name.
-type typeResolver struct {
-	connInfo *pgtype.ConnInfo // types by Postgres type name
-}
-
-func newTypeResolver() *typeResolver {
-	ci := pgtype.NewConnInfo()
-	return &typeResolver{connInfo: ci}
-}
-
-// findValue find the OID, and pgtype.ValueTranscoder for a Postgres type name.
-func (tr *typeResolver) findValue(name string) (uint32, pgtype.ValueTranscoder, bool) {
-	typ, ok := tr.connInfo.DataTypeForName(name)
-	if !ok {
-		return 0, nil, false
-	}
-	v := pgtype.NewValue(typ.Value)
-	return typ.OID, v.(pgtype.ValueTranscoder), true
-}
-
-// setValue sets the value of a ValueTranscoder to a value that should always
-// work and panics if it fails.
-func (tr *typeResolver) setValue(vt pgtype.ValueTranscoder, val interface{}) pgtype.ValueTranscoder {
-	if err := vt.Set(val); err != nil {
-		panic(fmt.Sprintf("set ValueTranscoder %T to %+v: %s", vt, val, err))
-	}
-	return vt
-}
-
-type compositeField struct {
-	name       string                 // name of the field
-	typeName   string                 // Postgres type name
-	defaultVal pgtype.ValueTranscoder // default value to use
-}
-
-func (tr *typeResolver) newCompositeValue(name string, fields ...compositeField) pgtype.ValueTranscoder {
-	if _, val, ok := tr.findValue(name); ok {
-		return val
-	}
-	fs := make([]pgtype.CompositeTypeField, len(fields))
-	vals := make([]pgtype.ValueTranscoder, len(fields))
-	isBinaryOk := true
-	for i, field := range fields {
-		oid, val, ok := tr.findValue(field.typeName)
-		if !ok {
-			oid = unknownOID
-			val = field.defaultVal
-		}
-		isBinaryOk = isBinaryOk && oid != unknownOID
-		fs[i] = pgtype.CompositeTypeField{Name: field.name, OID: oid}
-		vals[i] = val
-	}
-	// Okay to ignore error because it's only thrown when the number of field
-	// names does not equal the number of ValueTranscoders.
-	typ, _ := pgtype.NewCompositeTypeValues(name, fs, vals)
-	if !isBinaryOk {
-		return textPreferrer{ValueTranscoder: typ, typeName: name}
-	}
-	return typ
-}
-
-func (tr *typeResolver) newArrayValue(name, elemName string, defaultVal func() pgtype.ValueTranscoder) pgtype.ValueTranscoder {
-	if _, val, ok := tr.findValue(name); ok {
-		return val
-	}
-	elemOID, elemVal, ok := tr.findValue(elemName)
-	elemValFunc := func() pgtype.ValueTranscoder {
-		return pgtype.NewValue(elemVal).(pgtype.ValueTranscoder)
-	}
-	if !ok {
-		elemOID = unknownOID
-		elemValFunc = defaultVal
-	}
-	typ := pgtype.NewArrayType(name, elemOID, elemValFunc)
-	if elemOID == unknownOID {
-		return textPreferrer{ValueTranscoder: typ, typeName: name}
-	}
-	return typ
-}
-
-// newArrays creates a new pgtype.ValueTranscoder for the Postgres
-// composite type 'arrays'.
-func (tr *typeResolver) newArrays() pgtype.ValueTranscoder {
-	return tr.newCompositeValue(
-		"arrays",
-		compositeField{name: "texts", typeName: "_text", defaultVal: &pgtype.TextArray{}},
-		compositeField{name: "int8s", typeName: "_int8", defaultVal: &pgtype.Int8Array{}},
-		compositeField{name: "bools", typeName: "_bool", defaultVal: &pgtype.BoolArray{}},
-		compositeField{name: "floats", typeName: "_float8", defaultVal: &pgtype.Float8Array{}},
-	)
-}
-
-// newArraysInit creates an initialized pgtype.ValueTranscoder for the
-// Postgres composite type 'arrays' to encode query parameters.
-func (tr *typeResolver) newArraysInit(v Arrays) pgtype.ValueTranscoder {
-	return tr.setValue(tr.newArrays(), tr.newArraysRaw(v))
-}
-
-// newArraysRaw returns all composite fields for the Postgres composite
-// type 'arrays' as a slice of interface{} to encode query parameters.
-func (tr *typeResolver) newArraysRaw(v Arrays) []interface{} {
-	return []interface{}{
-		v.Texts,
-		v.Int8s,
-		v.Bools,
-		v.Floats,
-	}
-}
-
-// newBlocks creates a new pgtype.ValueTranscoder for the Postgres
-// composite type 'blocks'.
-func (tr *typeResolver) newBlocks() pgtype.ValueTranscoder {
-	return tr.newCompositeValue(
-		"blocks",
-		compositeField{name: "id", typeName: "int4", defaultVal: &pgtype.Int4{}},
-		compositeField{name: "screenshot_id", typeName: "int8", defaultVal: &pgtype.Int8{}},
-		compositeField{name: "body", typeName: "text", defaultVal: &pgtype.Text{}},
-	)
-}
-
-// newUserEmail creates a new pgtype.ValueTranscoder for the Postgres
-// composite type 'user_email'.
-func (tr *typeResolver) newUserEmail() pgtype.ValueTranscoder {
-	return tr.newCompositeValue(
-		"user_email",
-		compositeField{name: "id", typeName: "text", defaultVal: &pgtype.Text{}},
-		compositeField{name: "email", typeName: "citext", defaultVal: &pgtype.Text{}},
-	)
-}
-
-// newBlocksArray creates a new pgtype.ValueTranscoder for the Postgres
-// '_blocks' array type.
-func (tr *typeResolver) newBlocksArray() pgtype.ValueTranscoder {
-	return tr.newArrayValue("_blocks", "blocks", tr.newBlocks)
-}
-
-// newboolArrayRaw returns all elements for the Postgres array type '_bool'
-// as a slice of interface{} for use with the pgtype.Value Set method.
-func (tr *typeResolver) newboolArrayRaw(vs []bool) []interface{} {
-	elems := make([]interface{}, len(vs))
-	for i, v := range vs {
-		elems[i] = v
-	}
-	return elems
 }
 
 const searchScreenshotsSQL = `SELECT
@@ -277,14 +130,10 @@ func (q *DBQuerier) SearchScreenshots(ctx context.Context, params SearchScreensh
 	}
 	defer rows.Close()
 	items := []SearchScreenshotsRow{}
-	blocksArray := q.types.newBlocksArray()
 	for rows.Next() {
 		var item SearchScreenshotsRow
-		if err := rows.Scan(&item.ID, blocksArray); err != nil {
+		if err := rows.Scan(&item.ID, &item.Blocks); err != nil {
 			return nil, fmt.Errorf("scan SearchScreenshots row: %w", err)
-		}
-		if err := blocksArray.AssignTo(&item.Blocks); err != nil {
-			return nil, fmt.Errorf("assign SearchScreenshots row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -307,14 +156,10 @@ func (q *DBQuerier) SearchScreenshotsScan(results pgx.BatchResults) ([]SearchScr
 	}
 	defer rows.Close()
 	items := []SearchScreenshotsRow{}
-	blocksArray := q.types.newBlocksArray()
 	for rows.Next() {
 		var item SearchScreenshotsRow
-		if err := rows.Scan(&item.ID, blocksArray); err != nil {
+		if err := rows.Scan(&item.ID, &item.Blocks); err != nil {
 			return nil, fmt.Errorf("scan SearchScreenshotsBatch row: %w", err)
-		}
-		if err := blocksArray.AssignTo(&item.Blocks); err != nil {
-			return nil, fmt.Errorf("assign SearchScreenshots row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -348,14 +193,10 @@ func (q *DBQuerier) SearchScreenshotsOneCol(ctx context.Context, params SearchSc
 	}
 	defer rows.Close()
 	items := [][]Blocks{}
-	blocksArray := q.types.newBlocksArray()
 	for rows.Next() {
 		var item []Blocks
-		if err := rows.Scan(blocksArray); err != nil {
+		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan SearchScreenshotsOneCol row: %w", err)
-		}
-		if err := blocksArray.AssignTo(&item); err != nil {
-			return nil, fmt.Errorf("assign SearchScreenshotsOneCol row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -378,14 +219,10 @@ func (q *DBQuerier) SearchScreenshotsOneColScan(results pgx.BatchResults) ([][]B
 	}
 	defer rows.Close()
 	items := [][]Blocks{}
-	blocksArray := q.types.newBlocksArray()
 	for rows.Next() {
 		var item []Blocks
-		if err := rows.Scan(blocksArray); err != nil {
+		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan SearchScreenshotsOneColBatch row: %w", err)
-		}
-		if err := blocksArray.AssignTo(&item); err != nil {
-			return nil, fmt.Errorf("assign SearchScreenshotsOneCol row: %w", err)
 		}
 		items = append(items, item)
 	}
@@ -441,33 +278,25 @@ const arraysInputSQL = `SELECT $1::arrays;`
 // ArraysInput implements Querier.ArraysInput.
 func (q *DBQuerier) ArraysInput(ctx context.Context, arrays Arrays) (Arrays, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ArraysInput")
-	row := q.conn.QueryRow(ctx, arraysInputSQL, q.types.newArraysInit(arrays))
+	row := q.conn.QueryRow(ctx, arraysInputSQL, arrays)
 	var item Arrays
-	arraysRow := q.types.newArrays()
-	if err := row.Scan(arraysRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query ArraysInput: %w", err)
-	}
-	if err := arraysRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign ArraysInput row: %w", err)
 	}
 	return item, nil
 }
 
 // ArraysInputBatch implements Querier.ArraysInputBatch.
 func (q *DBQuerier) ArraysInputBatch(batch genericBatch, arrays Arrays) {
-	batch.Queue(arraysInputSQL, q.types.newArraysInit(arrays))
+	batch.Queue(arraysInputSQL, arrays)
 }
 
 // ArraysInputScan implements Querier.ArraysInputScan.
 func (q *DBQuerier) ArraysInputScan(results pgx.BatchResults) (Arrays, error) {
 	row := results.QueryRow()
 	var item Arrays
-	arraysRow := q.types.newArrays()
-	if err := row.Scan(arraysRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("scan ArraysInputBatch row: %w", err)
-	}
-	if err := arraysRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign ArraysInput row: %w", err)
 	}
 	return item, nil
 }
@@ -479,12 +308,8 @@ func (q *DBQuerier) UserEmails(ctx context.Context) (UserEmail, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "UserEmails")
 	row := q.conn.QueryRow(ctx, userEmailsSQL)
 	var item UserEmail
-	rowRow := q.types.newUserEmail()
-	if err := row.Scan(rowRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query UserEmails: %w", err)
-	}
-	if err := rowRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign UserEmails row: %w", err)
 	}
 	return item, nil
 }
@@ -498,37 +323,9 @@ func (q *DBQuerier) UserEmailsBatch(batch genericBatch) {
 func (q *DBQuerier) UserEmailsScan(results pgx.BatchResults) (UserEmail, error) {
 	row := results.QueryRow()
 	var item UserEmail
-	rowRow := q.types.newUserEmail()
-	if err := row.Scan(rowRow); err != nil {
+	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("scan UserEmailsBatch row: %w", err)
-	}
-	if err := rowRow.AssignTo(&item); err != nil {
-		return item, fmt.Errorf("assign UserEmails row: %w", err)
 	}
 	return item, nil
 }
 
-// textPreferrer wraps a pgtype.ValueTranscoder and sets the preferred encoding
-// format to text instead binary (the default). pggen uses the text format
-// when the OID is unknownOID because the binary format requires the OID.
-// Typically occurs for unregistered types.
-type textPreferrer struct {
-	pgtype.ValueTranscoder
-	typeName string
-}
-
-// PreferredParamFormat implements pgtype.ParamFormatPreferrer.
-func (t textPreferrer) PreferredParamFormat() int16 { return pgtype.TextFormatCode }
-
-func (t textPreferrer) NewTypeValue() pgtype.Value {
-	return textPreferrer{ValueTranscoder: pgtype.NewValue(t.ValueTranscoder).(pgtype.ValueTranscoder), typeName: t.typeName}
-}
-
-func (t textPreferrer) TypeName() string {
-	return t.typeName
-}
-
-// unknownOID means we don't know the OID for a type. This is okay for decoding
-// because pgx call DecodeText or DecodeBinary without requiring the OID. For
-// encoding parameters, pggen uses textPreferrer if the OID is unknown.
-const unknownOID = 0

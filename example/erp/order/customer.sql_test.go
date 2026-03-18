@@ -2,7 +2,7 @@ package order
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,8 +27,8 @@ func TestNewQuerier_FindOrdersByCustomer(t *testing.T) {
 		return
 	}
 	order1, err := q.InsertOrder(ctx, InsertOrderParams{
-		OrderDate:  pgtype.Timestamptz{Time: time.Now(), Status: pgtype.Present},
-		OrderTotal: pgtype.Numeric{Int: big.NewInt(77), Status: pgtype.Present},
+		OrderDate:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		OrderTotal: pgtype.Numeric{Int: big.NewInt(77), Valid: true},
 		CustID:     cust1.CustomerID,
 	})
 	if err != nil {

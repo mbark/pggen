@@ -5,9 +5,9 @@ package ltree
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -23,12 +23,12 @@ type Querier interface {
 	// FindTopScienceChildrenScan scans the result of an executed FindTopScienceChildrenBatch query.
 	FindTopScienceChildrenScan(results pgx.BatchResults) ([]pgtype.Text, error)
 
-	FindTopScienceChildrenAgg(ctx context.Context) (pgtype.TextArray, error)
+	FindTopScienceChildrenAgg(ctx context.Context) ([]string, error)
 	// FindTopScienceChildrenAggBatch enqueues a FindTopScienceChildrenAgg query into batch to be executed
 	// later by the batch.
 	FindTopScienceChildrenAggBatch(batch genericBatch)
 	// FindTopScienceChildrenAggScan scans the result of an executed FindTopScienceChildrenAggBatch query.
-	FindTopScienceChildrenAggScan(results pgx.BatchResults) (pgtype.TextArray, error)
+	FindTopScienceChildrenAggScan(results pgx.BatchResults) ([]string, error)
 
 	InsertSampleData(ctx context.Context) (pgconn.CommandTag, error)
 	// InsertSampleDataBatch enqueues a InsertSampleData query into batch to be executed
@@ -48,8 +48,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying Postgres transport to use
-	types *typeResolver // resolve types by name
+	conn genericConn // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -64,42 +63,13 @@ type genericConn interface {
 type genericBatch interface {
 	// Queue queues a query to batch b. query can be an SQL query or the name of a
 	// prepared statement. See Queue on *pgx.Batch.
-	Queue(query string, arguments ...interface{})
+	Queue(query string, arguments ...any) *pgx.QueuedQuery
 }
 
 // NewQuerier creates a DBQuerier that implements Querier. conn is typically
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
-	return &DBQuerier{conn: conn, types: newTypeResolver()}
-}
-
-// typeResolver looks up the pgtype.ValueTranscoder by Postgres type name.
-type typeResolver struct {
-	connInfo *pgtype.ConnInfo // types by Postgres type name
-}
-
-func newTypeResolver() *typeResolver {
-	ci := pgtype.NewConnInfo()
-	return &typeResolver{connInfo: ci}
-}
-
-// findValue find the OID, and pgtype.ValueTranscoder for a Postgres type name.
-func (tr *typeResolver) findValue(name string) (uint32, pgtype.ValueTranscoder, bool) {
-	typ, ok := tr.connInfo.DataTypeForName(name)
-	if !ok {
-		return 0, nil, false
-	}
-	v := pgtype.NewValue(typ.Value)
-	return typ.OID, v.(pgtype.ValueTranscoder), true
-}
-
-// setValue sets the value of a ValueTranscoder to a value that should always
-// work and panics if it fails.
-func (tr *typeResolver) setValue(vt pgtype.ValueTranscoder, val interface{}) pgtype.ValueTranscoder {
-	if err := vt.Set(val); err != nil {
-		panic(fmt.Sprintf("set ValueTranscoder %T to %+v: %s", vt, val, err))
-	}
-	return vt
+	return &DBQuerier{conn: conn}
 }
 
 const findTopScienceChildrenSQL = `SELECT path
@@ -159,10 +129,10 @@ FROM test
 WHERE path <@ 'Top.Science';`
 
 // FindTopScienceChildrenAgg implements Querier.FindTopScienceChildrenAgg.
-func (q *DBQuerier) FindTopScienceChildrenAgg(ctx context.Context) (pgtype.TextArray, error) {
+func (q *DBQuerier) FindTopScienceChildrenAgg(ctx context.Context) ([]string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindTopScienceChildrenAgg")
 	row := q.conn.QueryRow(ctx, findTopScienceChildrenAggSQL)
-	var item pgtype.TextArray
+	var item []string
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query FindTopScienceChildrenAgg: %w", err)
 	}
@@ -175,9 +145,9 @@ func (q *DBQuerier) FindTopScienceChildrenAggBatch(batch genericBatch) {
 }
 
 // FindTopScienceChildrenAggScan implements Querier.FindTopScienceChildrenAggScan.
-func (q *DBQuerier) FindTopScienceChildrenAggScan(results pgx.BatchResults) (pgtype.TextArray, error) {
+func (q *DBQuerier) FindTopScienceChildrenAggScan(results pgx.BatchResults) ([]string, error) {
 	row := results.QueryRow()
-	var item pgtype.TextArray
+	var item []string
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("scan FindTopScienceChildrenAggBatch row: %w", err)
 	}
@@ -236,7 +206,7 @@ const findLtreeInputSQL = `SELECT
 
 type FindLtreeInputRow struct {
 	Ltree   pgtype.Text      `json:"ltree"`
-	TextArr pgtype.TextArray `json:"text_arr"`
+	TextArr []string `json:"text_arr"`
 }
 
 // FindLtreeInput implements Querier.FindLtreeInput.
@@ -265,27 +235,3 @@ func (q *DBQuerier) FindLtreeInputScan(results pgx.BatchResults) (FindLtreeInput
 	return item, nil
 }
 
-// textPreferrer wraps a pgtype.ValueTranscoder and sets the preferred encoding
-// format to text instead binary (the default). pggen uses the text format
-// when the OID is unknownOID because the binary format requires the OID.
-// Typically occurs for unregistered types.
-type textPreferrer struct {
-	pgtype.ValueTranscoder
-	typeName string
-}
-
-// PreferredParamFormat implements pgtype.ParamFormatPreferrer.
-func (t textPreferrer) PreferredParamFormat() int16 { return pgtype.TextFormatCode }
-
-func (t textPreferrer) NewTypeValue() pgtype.Value {
-	return textPreferrer{ValueTranscoder: pgtype.NewValue(t.ValueTranscoder).(pgtype.ValueTranscoder), typeName: t.typeName}
-}
-
-func (t textPreferrer) TypeName() string {
-	return t.typeName
-}
-
-// unknownOID means we don't know the OID for a type. This is okay for decoding
-// because pgx call DecodeText or DecodeBinary without requiring the OID. For
-// encoding parameters, pggen uses textPreferrer if the OID is unknown.
-const unknownOID = 0

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
 	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/codegen/golang"

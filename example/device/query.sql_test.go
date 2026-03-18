@@ -2,8 +2,7 @@ package device
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +19,7 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 	_, err := q.InsertUser(ctx, userID, "foo")
 	require.NoError(t, err)
 	mac1, _ := net.ParseMAC("11:22:33:44:55:66")
-	_, err = q.InsertDevice(ctx, pgtype.Macaddr{Status: pgtype.Present, Addr: mac1}, userID)
+	_, err = q.InsertDevice(ctx, mac1, userID)
 	require.NoError(t, err)
 
 	t.Run("FindDevicesByUser", func(t *testing.T) {
@@ -28,16 +27,9 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 		require.NoError(t, err)
 		want := []FindDevicesByUserRow{
 			{
-				ID:   userID,
-				Name: "foo",
-				MacAddrs: pgtype.MacaddrArray{
-					Elements: []pgtype.Macaddr{{Addr: mac1, Status: pgtype.Present}},
-					Dimensions: []pgtype.ArrayDimension{{
-						Length:     1,
-						LowerBound: 1,
-					}},
-					Status: pgtype.Present,
-				},
+				ID:       userID,
+				Name:     "foo",
+				MacAddrs: []net.HardwareAddr{mac1},
 			},
 		}
 		assert.Equal(t, want, val)
@@ -51,16 +43,9 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 		require.NoError(t, err)
 		want := []FindDevicesByUserRow{
 			{
-				ID:   userID,
-				Name: "foo",
-				MacAddrs: pgtype.MacaddrArray{
-					Elements: []pgtype.Macaddr{{Addr: mac1, Status: pgtype.Present}},
-					Dimensions: []pgtype.ArrayDimension{{
-						Length:     1,
-						LowerBound: 1,
-					}},
-					Status: pgtype.Present,
-				},
+				ID:       userID,
+				Name:     "foo",
+				MacAddrs: []net.HardwareAddr{mac1},
 			},
 		}
 		assert.Equal(t, want, got)
@@ -80,9 +65,9 @@ func TestQuerier_CompositeUser(t *testing.T) {
 
 	mac1, _ := net.ParseMAC("11:22:33:44:55:66")
 	mac2, _ := net.ParseMAC("aa:bb:cc:dd:ee:ff")
-	_, err = q.InsertDevice(ctx, pgtype.Macaddr{Status: pgtype.Present, Addr: mac1}, userID)
+	_, err = q.InsertDevice(ctx, mac1, userID)
 	require.NoError(t, err)
-	_, err = q.InsertDevice(ctx, pgtype.Macaddr{Status: pgtype.Present, Addr: mac2}, userID)
+	_, err = q.InsertDevice(ctx, mac2, userID)
 	require.NoError(t, err)
 
 	t.Run("CompositeUser", func(t *testing.T) {
@@ -90,12 +75,12 @@ func TestQuerier_CompositeUser(t *testing.T) {
 		require.NoError(t, err)
 		want := []CompositeUserRow{
 			{
-				Mac:  pgtype.Macaddr{Addr: mac1, Status: pgtype.Present},
+				Mac:  mac1,
 				Type: DeviceTypeUndefined,
 				User: User{ID: &userID, Name: &name},
 			},
 			{
-				Mac:  pgtype.Macaddr{Addr: mac2, Status: pgtype.Present},
+				Mac:  mac2,
 				Type: DeviceTypeUndefined,
 				User: User{ID: &userID, Name: &name},
 			},
@@ -110,12 +95,12 @@ func TestQuerier_CompositeUser(t *testing.T) {
 		got, err := q.CompositeUserScan(results)
 		want := []CompositeUserRow{
 			{
-				Mac:  pgtype.Macaddr{Addr: mac1, Status: pgtype.Present},
+				Mac:  mac1,
 				Type: DeviceTypeUndefined,
 				User: User{ID: &userID, Name: &name},
 			},
 			{
-				Mac:  pgtype.Macaddr{Addr: mac2, Status: pgtype.Present},
+				Mac:  mac2,
 				Type: DeviceTypeUndefined,
 				User: User{ID: &userID, Name: &name},
 			},

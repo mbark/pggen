@@ -2,8 +2,8 @@ package composite
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mbark/pggen/internal/difftest"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgtest"
@@ -117,7 +117,7 @@ func TestNewQuerier_UserEmails(t *testing.T) {
 	require.NoError(t, err)
 	want := UserEmail{
 		ID:    "foo",
-		Email: pgtype.Text{String: "bar@example.com", Status: pgtype.Present},
+		Email: pgtype.Text{String: "bar@example.com", Valid: true},
 	}
 	difftest.AssertSame(t, want, got)
 }
