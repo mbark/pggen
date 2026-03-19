@@ -5,8 +5,8 @@ package device
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"net"
 )
 
@@ -69,7 +69,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn genericConn // underlying Postgres transport to use
+	conn  genericConn   // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -113,6 +113,24 @@ const (
 
 func (d DeviceType) String() string { return string(d) }
 
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"_macaddr",
+		"device_type",
+		"user",
+	})
+	return err
+}
+
 const findDevicesByUserSQL = `SELECT
   id,
   name,
@@ -121,9 +139,9 @@ FROM "user"
 WHERE id = $1;`
 
 type FindDevicesByUserRow struct {
-	ID       int                 `json:"id"`
-	Name     string              `json:"name"`
-	MacAddrs []net.HardwareAddr `json:"mac_addrs"`
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	MacAddrs []string `json:"mac_addrs"`
 }
 
 // FindDevicesByUser implements Querier.FindDevicesByUser.
@@ -183,8 +201,8 @@ FROM device d
 
 type CompositeUserRow struct {
 	Mac  net.HardwareAddr `json:"mac"`
-	Type DeviceType     `json:"type"`
-	User User           `json:"user"`
+	Type DeviceType       `json:"type"`
+	User User             `json:"user"`
 }
 
 // CompositeUser implements Querier.CompositeUser.
@@ -399,4 +417,3 @@ func (q *DBQuerier) InsertDeviceScan(results pgx.BatchResults) (pgconn.CommandTa
 	}
 	return cmdTag, err
 }
-

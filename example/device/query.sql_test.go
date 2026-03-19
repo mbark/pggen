@@ -13,6 +13,7 @@ import (
 func TestQuerier_FindDevicesByUser(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()
 	userID := 18
@@ -29,7 +30,7 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 			{
 				ID:       userID,
 				Name:     "foo",
-				MacAddrs: []net.HardwareAddr{mac1},
+				MacAddrs: []string{mac1.String()},
 			},
 		}
 		assert.Equal(t, want, val)
@@ -45,7 +46,7 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 			{
 				ID:       userID,
 				Name:     "foo",
-				MacAddrs: []net.HardwareAddr{mac1},
+				MacAddrs: []string{mac1.String()},
 			},
 		}
 		assert.Equal(t, want, got)
@@ -55,6 +56,7 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 func TestQuerier_CompositeUser(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()
 
@@ -114,6 +116,7 @@ func TestQuerier_CompositeUser(t *testing.T) {
 func TestQuerier_CompositeUserOne(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()
 	id := 15

@@ -151,7 +151,7 @@ func (tq TemplatedQuery) EmitParamStruct() string {
 // EmitParamNames emits the TemplatedQuery.Inputs into comma separated names
 // for use in a method invocation.
 func (tq TemplatedQuery) EmitParamNames() string {
-	appendParam := func(sb *strings.Builder, typ gotype.Type, name string) {
+	appendParam := func(sb *strings.Builder, _ gotype.Type, name string) {
 		// In pgx v5, all types are passed directly - no transcoder wrapping needed.
 		sb.WriteString(name)
 	}

@@ -17,6 +17,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	mac, _ := net.ParseMAC("00:00:5e:00:53:01")
@@ -64,6 +65,7 @@ func TestNewQuerier_FindOneDeviceArray(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 
@@ -89,6 +91,7 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 
@@ -114,6 +117,7 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	one, two := int32(1), int32(2)
@@ -146,6 +150,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	mac, _ := net.ParseMAC("08:00:2b:01:02:03")

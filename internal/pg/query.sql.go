@@ -127,7 +127,7 @@ SELECT
   -- typtype: b for a base type, c for a composite type (e.g., a table's
   -- row type), d for a domain, e for an enum type, p for a pseudo-type,
   -- or r for a range type.
-  typ.typtype       AS type_kind,
+  typ.typtype::text AS type_kind,
   -- typdefault is null if the type has no associated default value. If
   -- typdefaultbin is not null, typdefault must contain a human-readable
   -- version of the default expression represented by typdefaultbin. If
@@ -207,7 +207,7 @@ const findArrayTypesSQL = `SELECT
   -- typtype: b for a base type, c for a composite type (e.g., a table's
   -- row type), d for a domain, e for an enum type, p for a pseudo-type,
   -- or r for a range type.
-  arr_typ.typtype       AS type_kind
+  arr_typ.typtype::text AS type_kind
 FROM pg_type arr_typ
   JOIN pg_type elem_typ ON arr_typ.typelem = elem_typ.oid
 WHERE arr_typ.typisdefined

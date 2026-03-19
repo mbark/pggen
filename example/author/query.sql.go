@@ -5,9 +5,8 @@ package author
 import (
 	"context"
 	"fmt"
-
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -107,7 +106,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn genericConn // underlying Postgres transport to use
+	conn  genericConn   // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -129,6 +128,22 @@ type genericBatch interface {
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
+}
+
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"_text",
+	})
+	return err
 }
 
 const findAuthorByIDSQL = `SELECT * FROM author WHERE author_id = $1;`
@@ -544,4 +559,3 @@ func (q *DBQuerier) ArrayAggFirstNameScan(results pgx.BatchResults) ([]string, e
 	}
 	return item, nil
 }
-

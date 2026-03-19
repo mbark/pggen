@@ -72,18 +72,22 @@ func TestNewQuerier_GetManyTimestamptzs(t *testing.T) {
 	ts2 := time.Date(2022, 2, 2, 22, 22, 22, 0, time.UTC)
 
 	t.Run("GetManyTimestamptzs", func(t *testing.T) {
-		got, err := q.GetManyTimestamptzs(ctx, []time.Time{ts1, ts2})
+		input := []time.Time{ts1, ts2}
+		got, err := q.GetManyTimestamptzs(ctx, input)
 		require.NoError(t, err)
-		difftest.AssertSame(t, []*time.Time{&ts1, &ts2}, got)
+		want := []*time.Time{&ts1, &ts2}
+		difftest.AssertSame(t, want, got)
 	})
 
 	t.Run("GetManyTimestamptzsBatch", func(t *testing.T) {
 		batch := &pgx.Batch{}
-		q.GetManyTimestamptzsBatch(batch, []time.Time{ts1, ts2})
+		input := []time.Time{ts1, ts2}
+		q.GetManyTimestamptzsBatch(batch, input)
 		results := conn.SendBatch(ctx, batch)
 		defer errs.CaptureT(t, results.Close, "close batch results")
 		got, err := q.GetManyTimestamptzsScan(results)
 		require.NoError(t, err)
-		difftest.AssertSame(t, []*time.Time{&ts1, &ts2}, got)
+		want := []*time.Time{&ts1, &ts2}
+		difftest.AssertSame(t, want, got)
 	})
 }

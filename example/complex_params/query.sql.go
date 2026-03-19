@@ -5,8 +5,8 @@ package complex_params
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -54,7 +54,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn genericConn // underlying Postgres transport to use
+	conn  genericConn   // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -95,6 +95,26 @@ type ProductImageSetType struct {
 type ProductImageType struct {
 	Source     string     `json:"source"`
 	Dimensions Dimensions `json:"dimensions"`
+}
+
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"_int8",
+		"_product_image_type",
+		"dimensions",
+		"product_image_set_type",
+		"product_image_type",
+	})
+	return err
 }
 
 const paramArrayIntSQL = `SELECT $1::bigint[];`
@@ -236,4 +256,3 @@ func (q *DBQuerier) ParamNested3Scan(results pgx.BatchResults) (ProductImageSetT
 	}
 	return item, nil
 }
-

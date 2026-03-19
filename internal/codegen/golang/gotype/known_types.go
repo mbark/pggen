@@ -50,6 +50,7 @@ func FindKnownTypeNonNullable(oid uint32) (Type, bool) {
 var (
 	Bool          = MustParseKnownType("bool", pg.Bool)
 	Boolp         = MustParseKnownType("*bool", pg.Bool)
+	BoolSlice     = MustParseKnownType("[]bool", pg.BoolArray)
 	Int           = MustParseKnownType("int", pg.Int8)
 	Intp          = MustParseKnownType("*int", pg.Int8)
 	IntSlice      = MustParseKnownType("[]int", pg.Int8Array)
@@ -173,7 +174,7 @@ var knownTypesByOID = map[uint32]knownGoType{
 	pgtype.CircleOID:           {PgCircle, nil, nil},
 	pgtype.MacaddrOID:          {PgMacaddr, nil, nil},
 	pgtype.InetOID:             {PgInet, nil, nil},
-	pgtype.BoolArrayOID:        {StringSlice, nil, nil},
+	pgtype.BoolArrayOID:        {BoolSlice, nil, nil},
 	pgtype.ByteaArrayOID:       {StringSlice, nil, nil},
 	pgtype.Int2ArrayOID:        {Int16Slice, Int16pSlice, Int16Slice},
 	pgtype.Int4ArrayOID:        {Int32Slice, Int32pSlice, Int32Slice},

@@ -39,9 +39,7 @@ func (tf *TypeFetcher) FindTypesByOIDs(oids ...uint32) (map[uint32]Type, error) 
 		return nil, fmt.Errorf("find descendant oids: %w", err)
 	}
 	allOIDs := make([]uint32, len(descOIDs))
-	for i, d := range descOIDs {
-		allOIDs[i] = d
-	}
+	copy(allOIDs, descOIDs)
 	types, uncached := tf.cache.getOIDs(allOIDs...)
 
 	enums, err := tf.findEnumTypes(ctx, uncached)

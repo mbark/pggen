@@ -97,6 +97,22 @@ type NumericExternalType struct {
 	Num decimal.Decimal `json:"num"`
 }
 
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"numeric_external_type",
+	})
+	return err
+}
+
 const insertNumericSQL = `INSERT INTO numeric_external (num, num_arr)
 VALUES ($1, $2);`
 

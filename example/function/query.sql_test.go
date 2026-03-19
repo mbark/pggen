@@ -13,6 +13,7 @@ import (
 func TestNewQuerier_OutParams(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 

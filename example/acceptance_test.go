@@ -57,7 +57,7 @@ func TestExamples(t *testing.T) {
 				"--go-type", "int8=int",
 				"--go-type", "int4=int",
 				"--go-type", "text=string",
-				"--go-type", "citext=github.com/jackc/pgtype.Text",
+				"--go-type", "citext=github.com/jackc/pgx/v5/pgtype.Text",
 			},
 		},
 		{

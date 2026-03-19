@@ -147,7 +147,7 @@ func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func
 			if err != nil {
 				return errors.Join(e, err)
 			}
-			return fmt.Errorf("Container logs for Postgres container:\n\n%s\n\n%w", logs, e)
+			return fmt.Errorf("container logs for Postgres container:\n\n%s\n\n%w", logs, e)
 		}
 		return pgConn, errEnricher, stopDocker, nil
 	}

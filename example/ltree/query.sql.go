@@ -5,9 +5,9 @@ package ltree
 import (
 	"context"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5"
 )
 
 // Querier is a typesafe Go interface backed by SQL queries.
@@ -48,7 +48,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn genericConn // underlying Postgres transport to use
+	conn  genericConn   // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -70,6 +70,23 @@ type genericBatch interface {
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
+}
+
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"_ltree",
+		"_text",
+	})
+	return err
 }
 
 const findTopScienceChildrenSQL = `SELECT path
@@ -132,7 +149,7 @@ WHERE path <@ 'Top.Science';`
 func (q *DBQuerier) FindTopScienceChildrenAgg(ctx context.Context) ([]string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindTopScienceChildrenAgg")
 	row := q.conn.QueryRow(ctx, findTopScienceChildrenAggSQL)
-	var item []string
+	item := []string{}
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("query FindTopScienceChildrenAgg: %w", err)
 	}
@@ -147,7 +164,7 @@ func (q *DBQuerier) FindTopScienceChildrenAggBatch(batch genericBatch) {
 // FindTopScienceChildrenAggScan implements Querier.FindTopScienceChildrenAggScan.
 func (q *DBQuerier) FindTopScienceChildrenAggScan(results pgx.BatchResults) ([]string, error) {
 	row := results.QueryRow()
-	var item []string
+	item := []string{}
 	if err := row.Scan(&item); err != nil {
 		return item, fmt.Errorf("scan FindTopScienceChildrenAggBatch row: %w", err)
 	}
@@ -205,8 +222,8 @@ const findLtreeInputSQL = `SELECT
   ($2::text[])::ltree[] AS text_arr;`
 
 type FindLtreeInputRow struct {
-	Ltree   pgtype.Text      `json:"ltree"`
-	TextArr []string `json:"text_arr"`
+	Ltree   pgtype.Text `json:"ltree"`
+	TextArr []string    `json:"text_arr"`
 }
 
 // FindLtreeInput implements Querier.FindLtreeInput.
@@ -234,4 +251,3 @@ func (q *DBQuerier) FindLtreeInputScan(results pgx.BatchResults) (FindLtreeInput
 	}
 	return item, nil
 }
-

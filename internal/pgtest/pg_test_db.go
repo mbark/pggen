@@ -35,7 +35,7 @@ func NewPostgresSchemaString(t *testing.T, sql string, opts ...Option) (*pgx.Con
 	t.Logf("created schema: %s", schema)
 
 	// Load SQL files into new schema.
-	connStr += " search_path=" + schema
+	connStr += " search_path=" + schema + ",public"
 	connCfg, err := pgx.ParseConfig(connStr)
 	if err != nil {
 		t.Fatalf("parse config: %q: %s", connStr, err)
