@@ -241,6 +241,13 @@ func TestExamples(t *testing.T) {
 				"--query-glob", "example/domain/query.sql",
 			},
 		},
+		{
+			name: "example/jsonb",
+			args: []string{
+				"--schema-glob", "example/jsonb/schema.sql",
+				"--query-glob", "example/jsonb/query.sql",
+			},
+		},
 	}
 	if *update {
 		// update only disables the assertions. Running the tests causes pggen
