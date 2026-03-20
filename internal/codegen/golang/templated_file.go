@@ -23,7 +23,8 @@ type TemplatedFile struct {
 	GoPkg      string           // the name of the Go package to use for the "package foo" declaration
 	SourcePath string           // absolute path to source SQL file
 	Queries    []TemplatedQuery // the queries with all template information
-	Imports    []string         // Go imports
+	Imports    []ImportPkg      // Go imports, with aliases for collisions
+	RawImports []string         // Go import paths (no aliases), for internal use
 	// True if this file is the leader file. The leader defines common code used
 	// by all queries in the same directory. Only one leader per directory.
 	IsLeader bool

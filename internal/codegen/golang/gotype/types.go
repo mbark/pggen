@@ -115,7 +115,10 @@ func getTypePackage(typ Type) string {
 	}
 }
 
-func QualifyType(typ Type, otherPkgPath string) string {
+// QualifyType returns the Go qualified type string for typ, relative to
+// otherPkgPath. If aliases is non-nil, it maps full package paths to import
+// aliases for resolving name collisions.
+func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
 	sb := &strings.Builder{}
 	arrType, isArr := typ.(*ArrayType)
 	if isArr {
@@ -140,7 +143,14 @@ func QualifyType(typ Type, otherPkgPath string) string {
 	}
 	sb.Grow(len(typ.BaseName()))
 	if typ.Import() != "" {
-		shortPkg := ExtractShortPackage([]byte(pkg))
+		// Check for an import alias first.
+		shortPkg := ""
+		if len(aliases) > 0 && aliases[0] != nil {
+			shortPkg = aliases[0][pkg]
+		}
+		if shortPkg == "" {
+			shortPkg = ExtractShortPackage([]byte(pkg))
+		}
 		sb.WriteString(shortPkg)
 		sb.WriteRune('.')
 	}
