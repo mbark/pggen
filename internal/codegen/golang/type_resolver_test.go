@@ -141,6 +141,26 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			},
 		},
 		{
+			name:     "date array",
+			pgType:   pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
+			nullable: false,
+			want: &gotype.ArrayType{
+				PgArray: pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
+				Elem: &gotype.ImportType{
+					PkgPath: "github.com/jackc/pgx/v5/pgtype",
+					Type:    &gotype.OpaqueType{Name: "Date"},
+				},
+			},
+		},
+		{
+			name:     "nullable enum",
+			pgType:   pgDeviceEnum,
+			nullable: true,
+			want: &gotype.PointerType{
+				Elem: &gotype.ImportType{PkgPath: testPkgPath, Type: goDeviceEnum},
+			},
+		},
+		{
 			name: "composite",
 			pgType: pg.CompositeType{
 				Name:        "qux",

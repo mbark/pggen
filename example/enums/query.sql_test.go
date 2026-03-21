@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+func ptrDT(d DeviceType) *DeviceType { return &d }
+
 func TestNewQuerier_FindAllDevices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -29,7 +31,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: mac, Type: DeviceTypeIot},
+				{Mac: mac, Type: ptrDT(DeviceTypeIot)},
 			},
 			devices,
 		)
@@ -44,7 +46,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: mac, Type: DeviceTypeIot},
+				{Mac: mac, Type: ptrDT(DeviceTypeIot)},
 			},
 			devices,
 		)
@@ -58,6 +60,14 @@ var allDeviceTypes = []DeviceType{
 	DeviceTypeIpad,
 	DeviceTypeDesktop,
 	DeviceTypeIot,
+}
+
+func toDeviceTypePtrs(ds []DeviceType) []*DeviceType {
+	out := make([]*DeviceType, len(ds))
+	for i := range ds {
+		out[i] = &ds[i]
+	}
+	return out
 }
 
 func TestNewQuerier_FindOneDeviceArray(t *testing.T) {
@@ -98,7 +108,7 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 	t.Run("FindManyDeviceArray", func(t *testing.T) {
 		devices, err := q.FindManyDeviceArray(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, [][]DeviceType{allDeviceTypes[3:], allDeviceTypes}, devices)
+		assert.Equal(t, [][]*DeviceType{toDeviceTypePtrs(allDeviceTypes[3:]), toDeviceTypePtrs(allDeviceTypes)}, devices)
 	})
 
 	t.Run("FindManyDeviceArrayBatch", func(t *testing.T) {
@@ -108,7 +118,7 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 		defer errs.CaptureT(t, results.Close, "close batch results")
 		devices, err := q.FindManyDeviceArrayScan(results)
 		require.NoError(t, err)
-		assert.Equal(t, [][]DeviceType{allDeviceTypes[3:], allDeviceTypes}, devices)
+		assert.Equal(t, [][]*DeviceType{toDeviceTypePtrs(allDeviceTypes[3:]), toDeviceTypePtrs(allDeviceTypes)}, devices)
 	})
 }
 
@@ -126,8 +136,8 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 		devices, err := q.FindManyDeviceArrayWithNum(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, []FindManyDeviceArrayWithNumRow{
-			{Num: &one, DeviceTypes: allDeviceTypes[3:]},
-			{Num: &two, DeviceTypes: allDeviceTypes},
+			{Num: &one, DeviceTypes: toDeviceTypePtrs(allDeviceTypes[3:])},
+			{Num: &two, DeviceTypes: toDeviceTypePtrs(allDeviceTypes)},
 		}, devices)
 	})
 
@@ -139,8 +149,8 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 		devices, err := q.FindManyDeviceArrayWithNumScan(results)
 		require.NoError(t, err)
 		assert.Equal(t, []FindManyDeviceArrayWithNumRow{
-			{Num: &one, DeviceTypes: allDeviceTypes[3:]},
-			{Num: &two, DeviceTypes: allDeviceTypes},
+			{Num: &one, DeviceTypes: toDeviceTypePtrs(allDeviceTypes[3:])},
+			{Num: &two, DeviceTypes: toDeviceTypePtrs(allDeviceTypes)},
 		}, devices)
 	})
 }
@@ -159,7 +169,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideComposite(ctx)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: mac, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: ptrDT(DeviceTypePhone)},
 			device,
 		)
 	})
@@ -172,7 +182,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideCompositeScan(results)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: mac, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: ptrDT(DeviceTypePhone)},
 			device,
 		)
 	})

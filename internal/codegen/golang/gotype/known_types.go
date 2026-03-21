@@ -111,6 +111,7 @@ var (
 	PgInet             = MustParseKnownType("net/netip.Prefix", pg.Inet)
 	PgMacaddr          = MustParseKnownType("net.HardwareAddr", pg.Macaddr)
 	PgDate             = MustParseKnownType("github.com/jackc/pgx/v5/pgtype.Date", pg.Date)
+	PgDateSlice        = MustParseKnownType("[]github.com/jackc/pgx/v5/pgtype.Date", pg.DateArray)
 	PgTime             = MustParseKnownType("github.com/jackc/pgx/v5/pgtype.Time", pg.Time)
 	PgTimestamp        = MustParseKnownType("github.com/jackc/pgx/v5/pgtype.Timestamp", pg.Timestamp)
 	PgTimestamptz      = MustParseKnownType("github.com/jackc/pgx/v5/pgtype.Timestamptz", pg.Timestamptz)
@@ -194,7 +195,7 @@ var knownTypesByOID = map[uint32]knownGoType{
 	pgtype.TimeOID:             {PgTime, nil, nil},
 	pgtype.TimestampOID:        {PgTimestamp, nil, nil},
 	pgtype.TimestampArrayOID:   {StringSlice, nil, nil},
-	pgtype.DateArrayOID:        {StringSlice, nil, nil},
+	pgtype.DateArrayOID:        {PgDateSlice, PgDateSlice, PgDateSlice},
 	pgtype.TimestamptzOID:      {PgTimestamptz, nil, nil},
 	pgtype.TimestamptzArrayOID: {StringSlice, nil, nil},
 	pgtype.IntervalOID:         {PgInterval, nil, nil},

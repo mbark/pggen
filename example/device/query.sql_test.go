@@ -78,12 +78,12 @@ func TestQuerier_CompositeUser(t *testing.T) {
 		want := []CompositeUserRow{
 			{
 				Mac:  mac1,
-				Type: DeviceTypeUndefined,
+				Type: ptrDeviceType(DeviceTypeUndefined),
 				User: User{ID: &userID, Name: &name},
 			},
 			{
 				Mac:  mac2,
-				Type: DeviceTypeUndefined,
+				Type: ptrDeviceType(DeviceTypeUndefined),
 				User: User{ID: &userID, Name: &name},
 			},
 		}
@@ -98,12 +98,12 @@ func TestQuerier_CompositeUser(t *testing.T) {
 		want := []CompositeUserRow{
 			{
 				Mac:  mac1,
-				Type: DeviceTypeUndefined,
+				Type: ptrDeviceType(DeviceTypeUndefined),
 				User: User{ID: &userID, Name: &name},
 			},
 			{
 				Mac:  mac2,
-				Type: DeviceTypeUndefined,
+				Type: ptrDeviceType(DeviceTypeUndefined),
 				User: User{ID: &userID, Name: &name},
 			},
 		}
@@ -154,3 +154,5 @@ func TestQuerier_CompositeUserOne(t *testing.T) {
 		}, gotTwoScan)
 	})
 }
+
+func ptrDeviceType(d DeviceType) *DeviceType { return &d }

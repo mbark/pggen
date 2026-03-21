@@ -90,6 +90,9 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 		return gotype.NewArrayType(pgt, elemType), nil
 	case pg.EnumType:
 		enum := gotype.NewEnumType(pkgPath, pgt, tr.caser)
+		if nullable {
+			return &gotype.PointerType{Elem: enum}, nil
+		}
 		return enum, nil
 	case pg.CompositeType:
 		comp, err := CreateCompositeType(pkgPath, pgt, tr, tr.caser)

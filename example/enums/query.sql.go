@@ -39,12 +39,12 @@ type Querier interface {
 	FindOneDeviceArrayScan(results pgx.BatchResults) ([]DeviceType, error)
 
 	// Select many rows of device_type enum values.
-	FindManyDeviceArray(ctx context.Context) ([][]DeviceType, error)
+	FindManyDeviceArray(ctx context.Context) ([][]*DeviceType, error)
 	// FindManyDeviceArrayBatch enqueues a FindManyDeviceArray query into batch to be executed
 	// later by the batch.
 	FindManyDeviceArrayBatch(batch genericBatch)
 	// FindManyDeviceArrayScan scans the result of an executed FindManyDeviceArrayBatch query.
-	FindManyDeviceArrayScan(results pgx.BatchResults) ([][]DeviceType, error)
+	FindManyDeviceArrayScan(results pgx.BatchResults) ([][]*DeviceType, error)
 
 	// Select many rows of device_type enum values with multiple output columns.
 	FindManyDeviceArrayWithNum(ctx context.Context) ([]FindManyDeviceArrayWithNumRow, error)
@@ -93,7 +93,7 @@ func NewQuerier(conn genericConn) *DBQuerier {
 // Device represents the Postgres composite type "device".
 type Device struct {
 	Mac  net.HardwareAddr `json:"mac"`
-	Type DeviceType       `json:"type"`
+	Type *DeviceType      `json:"type"`
 }
 
 // DeviceType represents the Postgres enum "device_type".
@@ -133,7 +133,7 @@ FROM device;`
 
 type FindAllDevicesRow struct {
 	Mac  net.HardwareAddr `json:"mac"`
-	Type DeviceType       `json:"type"`
+	Type *DeviceType      `json:"type"`
 }
 
 // FindAllDevices implements Querier.FindAllDevices.
@@ -244,16 +244,16 @@ UNION ALL
 SELECT enum_range(NULL::device_type) AS device_types;`
 
 // FindManyDeviceArray implements Querier.FindManyDeviceArray.
-func (q *DBQuerier) FindManyDeviceArray(ctx context.Context) ([][]DeviceType, error) {
+func (q *DBQuerier) FindManyDeviceArray(ctx context.Context) ([][]*DeviceType, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindManyDeviceArray")
 	rows, err := q.conn.Query(ctx, findManyDeviceArraySQL)
 	if err != nil {
 		return nil, fmt.Errorf("query FindManyDeviceArray: %w", err)
 	}
 	defer rows.Close()
-	items := [][]DeviceType{}
+	items := [][]*DeviceType{}
 	for rows.Next() {
-		var item []DeviceType
+		var item []*DeviceType
 		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan FindManyDeviceArray row: %w", err)
 		}
@@ -271,15 +271,15 @@ func (q *DBQuerier) FindManyDeviceArrayBatch(batch genericBatch) {
 }
 
 // FindManyDeviceArrayScan implements Querier.FindManyDeviceArrayScan.
-func (q *DBQuerier) FindManyDeviceArrayScan(results pgx.BatchResults) ([][]DeviceType, error) {
+func (q *DBQuerier) FindManyDeviceArrayScan(results pgx.BatchResults) ([][]*DeviceType, error) {
 	rows, err := results.Query()
 	if err != nil {
 		return nil, fmt.Errorf("query FindManyDeviceArrayBatch: %w", err)
 	}
 	defer rows.Close()
-	items := [][]DeviceType{}
+	items := [][]*DeviceType{}
 	for rows.Next() {
-		var item []DeviceType
+		var item []*DeviceType
 		if err := rows.Scan(&item); err != nil {
 			return nil, fmt.Errorf("scan FindManyDeviceArrayBatch row: %w", err)
 		}
@@ -296,8 +296,8 @@ UNION ALL
 SELECT 2 as num, enum_range(NULL::device_type) AS device_types;`
 
 type FindManyDeviceArrayWithNumRow struct {
-	Num         *int32       `json:"num"`
-	DeviceTypes []DeviceType `json:"device_types"`
+	Num         *int32        `json:"num"`
+	DeviceTypes []*DeviceType `json:"device_types"`
 }
 
 // FindManyDeviceArrayWithNum implements Querier.FindManyDeviceArrayWithNum.

@@ -201,7 +201,7 @@ FROM device d
 
 type CompositeUserRow struct {
 	Mac  net.HardwareAddr `json:"mac"`
-	Type DeviceType       `json:"type"`
+	Type *DeviceType      `json:"type"`
 	User User             `json:"user"`
 }
 
