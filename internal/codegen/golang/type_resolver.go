@@ -49,6 +49,11 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 		case *gotype.ArrayType:
 			arrTyp, ok := pgt.(pg.ArrayType)
 			if !ok {
+				// []byte is special: it's a Go slice but maps to scalar Postgres
+				// types like bytea, json, and jsonb.
+				if typ.BaseName() == "[]byte" {
+					return typ, nil
+				}
 				return nil, fmt.Errorf("resolve known type %q does not have pg array type %q", typ, pgt)
 			}
 			typ.PgArray = arrTyp
@@ -85,6 +90,9 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 		return gotype.NewArrayType(pgt, elemType), nil
 	case pg.EnumType:
 		enum := gotype.NewEnumType(pkgPath, pgt, tr.caser)
+		if nullable {
+			return &gotype.PointerType{Elem: enum}, nil
+		}
 		return enum, nil
 	case pg.CompositeType:
 		comp, err := CreateCompositeType(pkgPath, pgt, tr, tr.caser)

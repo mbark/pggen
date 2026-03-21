@@ -2,8 +2,7 @@ package enums
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
@@ -13,11 +12,14 @@ import (
 	"time"
 )
 
+func ptrDT(d DeviceType) *DeviceType { return &d }
+
 func TestNewQuerier_FindAllDevices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	mac, _ := net.ParseMAC("00:00:5e:00:53:01")
@@ -29,7 +31,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypeIot},
+				{Mac: mac, Type: ptrDT(DeviceTypeIot)},
 			},
 			devices,
 		)
@@ -44,7 +46,7 @@ func TestNewQuerier_FindAllDevices(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t,
 			[]FindAllDevicesRow{
-				{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypeIot},
+				{Mac: mac, Type: ptrDT(DeviceTypeIot)},
 			},
 			devices,
 		)
@@ -60,11 +62,20 @@ var allDeviceTypes = []DeviceType{
 	DeviceTypeIot,
 }
 
+func toDeviceTypePtrs(ds []DeviceType) []*DeviceType {
+	out := make([]*DeviceType, len(ds))
+	for i := range ds {
+		out[i] = &ds[i]
+	}
+	return out
+}
+
 func TestNewQuerier_FindOneDeviceArray(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 
@@ -90,13 +101,14 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 
 	t.Run("FindManyDeviceArray", func(t *testing.T) {
 		devices, err := q.FindManyDeviceArray(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, [][]DeviceType{allDeviceTypes[3:], allDeviceTypes}, devices)
+		assert.Equal(t, [][]*DeviceType{toDeviceTypePtrs(allDeviceTypes[3:]), toDeviceTypePtrs(allDeviceTypes)}, devices)
 	})
 
 	t.Run("FindManyDeviceArrayBatch", func(t *testing.T) {
@@ -106,7 +118,7 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 		defer errs.CaptureT(t, results.Close, "close batch results")
 		devices, err := q.FindManyDeviceArrayScan(results)
 		require.NoError(t, err)
-		assert.Equal(t, [][]DeviceType{allDeviceTypes[3:], allDeviceTypes}, devices)
+		assert.Equal(t, [][]*DeviceType{toDeviceTypePtrs(allDeviceTypes[3:]), toDeviceTypePtrs(allDeviceTypes)}, devices)
 	})
 }
 
@@ -115,6 +127,7 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	one, two := int32(1), int32(2)
@@ -123,8 +136,8 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 		devices, err := q.FindManyDeviceArrayWithNum(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, []FindManyDeviceArrayWithNumRow{
-			{Num: &one, DeviceTypes: allDeviceTypes[3:]},
-			{Num: &two, DeviceTypes: allDeviceTypes},
+			{Num: &one, DeviceTypes: toDeviceTypePtrs(allDeviceTypes[3:])},
+			{Num: &two, DeviceTypes: toDeviceTypePtrs(allDeviceTypes)},
 		}, devices)
 	})
 
@@ -136,8 +149,8 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 		devices, err := q.FindManyDeviceArrayWithNumScan(results)
 		require.NoError(t, err)
 		assert.Equal(t, []FindManyDeviceArrayWithNumRow{
-			{Num: &one, DeviceTypes: allDeviceTypes[3:]},
-			{Num: &two, DeviceTypes: allDeviceTypes},
+			{Num: &one, DeviceTypes: toDeviceTypePtrs(allDeviceTypes[3:])},
+			{Num: &two, DeviceTypes: toDeviceTypePtrs(allDeviceTypes)},
 		}, devices)
 	})
 }
@@ -147,6 +160,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 	defer cancel()
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	mac, _ := net.ParseMAC("08:00:2b:01:02:03")
@@ -155,7 +169,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideComposite(ctx)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: ptrDT(DeviceTypePhone)},
 			device,
 		)
 	})
@@ -168,7 +182,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 		device, err := q.EnumInsideCompositeScan(results)
 		require.NoError(t, err)
 		assert.Equal(t,
-			Device{Mac: pgtype.Macaddr{Addr: mac, Status: pgtype.Present}, Type: DeviceTypePhone},
+			Device{Mac: mac, Type: ptrDT(DeviceTypePhone)},
 			device,
 		)
 	})
@@ -177,7 +191,7 @@ func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 func insertDevice(t *testing.T, q *DBQuerier, mac net.HardwareAddr, device DeviceType) {
 	t.Helper()
 	_, err := q.InsertDevice(context.Background(),
-		pgtype.Macaddr{Addr: mac, Status: pgtype.Present},
+		mac,
 		device,
 	)
 	require.NoError(t, err)

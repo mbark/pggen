@@ -2,7 +2,7 @@ package complex_params
 
 import (
 	"context"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,6 +12,7 @@ import (
 func TestNewQuerier_ParamArrayInt(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -39,6 +40,7 @@ func TestNewQuerier_ParamArrayInt(t *testing.T) {
 func TestNewQuerier_ParamNested1(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -66,6 +68,7 @@ func TestNewQuerier_ParamNested1(t *testing.T) {
 func TestNewQuerier_ParamNested2(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -96,6 +99,7 @@ func TestNewQuerier_ParamNested2(t *testing.T) {
 func TestNewQuerier_ParamNested2Array(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -126,6 +130,7 @@ func TestNewQuerier_ParamNested2Array(t *testing.T) {
 func TestNewQuerier_ParamNested3(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -160,9 +165,8 @@ func TestNewQuerier_ParamNested3(t *testing.T) {
 func TestNewQuerier_ParamNested3_QueryAllDataTypes(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 	ctx := context.Background()
-	// dataTypes, err := QueryAllDataTypes(ctx, conn)
-	// require.NoError(t, err)
 	q := NewQuerier(conn)
 
 	want := ProductImageSetType{

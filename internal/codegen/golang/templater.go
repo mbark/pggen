@@ -6,6 +6,7 @@ import (
 	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 	"github.com/mbark/pggen/internal/gomod"
+	"github.com/mbark/pggen/internal/pginfer"
 	"strconv"
 	"strings"
 	"unicode"
@@ -41,6 +42,7 @@ func NewTemplater(opts TemplaterOpts) Templater {
 func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, error) {
 	goQueryFiles := make([]TemplatedFile, 0, len(files))
 	allDeclarers := NewDeclarerSet()
+	pgTypeNames := make(map[string]struct{})
 
 	// Pick leader file to define common structs and interfaces via Declarer.
 	firstIndex := -1
@@ -54,12 +56,24 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 
 	for i, queryFile := range files {
 		isLeader := i == firstIndex
-		goFile, decls, err := tm.templateFile(queryFile, isLeader)
+		goFile, decls, fileTypeNames, err := tm.templateFile(queryFile, isLeader)
 		if err != nil {
 			return nil, fmt.Errorf("template query file %s for go: %w", queryFile.SourcePath, err)
 		}
 		goQueryFiles = append(goQueryFiles, goFile)
 		allDeclarers.AddAll(decls.ListAll()...)
+		for name := range fileTypeNames {
+			pgTypeNames[name] = struct{}{}
+		}
+	}
+
+	// If there are composite or enum types, add a RegisterTypes declarer.
+	if len(pgTypeNames) > 0 {
+		names := make([]string, 0, len(pgTypeNames))
+		for name := range pgTypeNames {
+			names = append(names, name)
+		}
+		allDeclarers.AddAll(NewTypeRegistrationDeclarer(names))
 	}
 
 	// Add declarers to leader file.
@@ -72,9 +86,9 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 		}
 		pgconnIdx := -1
 		imports := file.Imports
-		for i, pkg := range imports {
-			if pkg == "github.com/jackc/pgconn" {
-				pgconnIdx = i
+		for j, imp := range imports {
+			if imp.PkgPath == "github.com/jackc/pgx/v5/pgconn" {
+				pgconnIdx = j
 				break
 			}
 		}
@@ -92,9 +106,9 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 		}
 		selfPkgIdx := -1
 		imports := file.Imports
-		for i, pkg := range file.Imports {
-			if pkg == selfPkg {
-				selfPkgIdx = i
+		for j, imp := range file.Imports {
+			if imp.PkgPath == selfPkg {
+				selfPkgIdx = j
 				break
 			}
 		}
@@ -107,17 +121,15 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 }
 
 // templateFile creates the data needed to build a Go file for a query file.
-// Also returns any declarations needed by this query file. The caller must
-// dedupe declarations.
-func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (TemplatedFile, DeclarerSet, error) {
+// Also returns any declarations needed by this query file and the set of
+// Postgres type names that need registration. The caller must dedupe
+// declarations.
+func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (TemplatedFile, DeclarerSet, map[string]struct{}, error) {
 	imports := NewImportSet()
 	imports.AddPackage("context")
 	imports.AddPackage("fmt")
-	imports.AddPackage("github.com/jackc/pgconn")
-	if isLeader {
-		imports.AddPackage("github.com/jackc/pgtype")
-	}
-	imports.AddPackage("github.com/jackc/pgx/v4")
+	imports.AddPackage("github.com/jackc/pgx/v5/pgconn")
+	imports.AddPackage("github.com/jackc/pgx/v5")
 
 	pkgPath := ""
 	// NOTE: err == nil check
@@ -129,66 +141,97 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 		pkgPath = pkg
 	}
 
-	queries := make([]TemplatedQuery, 0, len(file.Queries))
+	// First pass: resolve all types and collect imports.
+	type queryData struct {
+		query   pginfer.TypedQuery
+		doc     string
+		inputs  []gotype.Type
+		outputs []gotype.Type
+	}
+	queryDatas := make([]queryData, 0, len(file.Queries))
 	declarers := NewDeclarerSet()
+	pgTypeNames := make(map[string]struct{})
 	for _, query := range file.Queries {
-		// Build doc string.
 		docs := strings.Builder{}
 		avgCharsPerLine := 40
 		docs.Grow(len(query.Doc) * avgCharsPerLine)
 		for i, d := range query.Doc {
 			if i > 0 {
-				docs.WriteByte('\t') // first line is already indented in the template
+				docs.WriteByte('\t')
 			}
 			docs.WriteString("// ")
 			docs.WriteString(d)
 			docs.WriteRune('\n')
 		}
 
-		// Build inputs.
-		inputs := make([]TemplatedParam, len(query.Inputs))
+		inputTypes := make([]gotype.Type, len(query.Inputs))
 		for i, input := range query.Inputs {
-			goType, err := tm.resolver.Resolve(input.PgType /*nullable*/, false, pkgPath)
+			goType, err := tm.resolver.Resolve(input.PgType, false, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, err
+				return TemplatedFile{}, nil, nil, err
 			}
 			imports.AddType(goType)
-			inputs[i] = TemplatedParam{
-				UpperName: tm.chooseUpperName(input.PgName, "UnnamedParam", i, len(query.Inputs)),
-				LowerName: tm.chooseLowerName(input.PgName, "unnamedParam", i, len(query.Inputs)),
-				QualType:  gotype.QualifyType(goType, pkgPath),
-				Type:      goType,
-				RawName:   query.Inputs[i],
-			}
-			ds := FindInputDeclarers(goType).ListAll()
-			declarers.AddAll(ds...)
+			collectPgTypeNames(goType, pgTypeNames)
+			inputTypes[i] = goType
+			declarers.AddAll(FindInputDeclarers(goType).ListAll()...)
 		}
 
-		// Build outputs.
-		outputs := make([]TemplatedColumn, len(query.Outputs))
+		outputTypes := make([]gotype.Type, len(query.Outputs))
 		for i, out := range query.Outputs {
 			goType, err := tm.resolver.Resolve(out.PgType, out.Nullable, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, err
+				return TemplatedFile{}, nil, nil, err
 			}
 			imports.AddType(goType)
+			collectPgTypeNames(goType, pgTypeNames)
+			outputTypes[i] = goType
+			declarers.AddAll(FindOutputDeclarers(goType).ListAll()...)
+		}
+
+		queryDatas = append(queryDatas, queryData{
+			query:   query,
+			doc:     docs.String(),
+			inputs:  inputTypes,
+			outputs: outputTypes,
+		})
+	}
+
+	// Compute alias map for import collisions.
+	aliasMap := imports.AliasMap()
+
+	// Second pass: build templated queries using alias-aware type qualification.
+	queries := make([]TemplatedQuery, 0, len(queryDatas))
+	for _, qd := range queryDatas {
+		inputs := make([]TemplatedParam, len(qd.query.Inputs))
+		for i, input := range qd.query.Inputs {
+			goType := qd.inputs[i]
+			inputs[i] = TemplatedParam{
+				UpperName: tm.chooseUpperName(input.PgName, "UnnamedParam", i, len(qd.query.Inputs)),
+				LowerName: tm.chooseLowerName(input.PgName, "unnamedParam", i, len(qd.query.Inputs)),
+				QualType:  gotype.QualifyType(goType, pkgPath, aliasMap),
+				Type:      goType,
+				RawName:   qd.query.Inputs[i],
+			}
+		}
+
+		outputs := make([]TemplatedColumn, len(qd.query.Outputs))
+		for i, out := range qd.query.Outputs {
+			goType := qd.outputs[i]
 			outputs[i] = TemplatedColumn{
 				PgName:    out.PgName,
-				UpperName: tm.chooseUpperName(out.PgName, "UnnamedColumn", i, len(query.Outputs)),
-				LowerName: tm.chooseLowerName(out.PgName, "UnnamedColumn", i, len(query.Outputs)),
+				UpperName: tm.chooseUpperName(out.PgName, "UnnamedColumn", i, len(qd.query.Outputs)),
+				LowerName: tm.chooseLowerName(out.PgName, "UnnamedColumn", i, len(qd.query.Outputs)),
 				Type:      goType,
-				QualType:  gotype.QualifyType(goType, pkgPath),
+				QualType:  gotype.QualifyType(goType, pkgPath, aliasMap),
 			}
-			ds := FindOutputDeclarers(goType).ListAll()
-			declarers.AddAll(ds...)
 		}
 
 		queries = append(queries, TemplatedQuery{
-			Name:             tm.caser.ToUpperGoIdent(query.Name),
-			SQLVarName:       tm.caser.ToLowerGoIdent(query.Name) + "SQL",
-			ResultKind:       query.ResultKind,
-			Doc:              docs.String(),
-			PreparedSQL:      query.PreparedSQL,
+			Name:             tm.caser.ToUpperGoIdent(qd.query.Name),
+			SQLVarName:       tm.caser.ToLowerGoIdent(qd.query.Name) + "SQL",
+			ResultKind:       qd.query.ResultKind,
+			Doc:              qd.doc,
+			PreparedSQL:      qd.query.PreparedSQL,
 			Inputs:           inputs,
 			Outputs:          outputs,
 			InlineParamCount: tm.inlineParamCount,
@@ -200,9 +243,10 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 		GoPkg:      tm.pkg,
 		SourcePath: file.SourcePath,
 		Queries:    queries,
-		Imports:    imports.SortedPackages(),
+		Imports:    imports.SortedImports(),
+		RawImports: imports.SortedPackages(),
 		IsLeader:   isLeader,
-	}, declarers, nil
+	}, declarers, pgTypeNames, nil
 }
 
 // chooseUpperName converts pgName into a capitalized Go identifier name.

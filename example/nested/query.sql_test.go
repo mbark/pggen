@@ -2,15 +2,17 @@ package nested
 
 import (
 	"context"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestNewQuerier_ArrayNested2(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -42,6 +44,7 @@ func TestNewQuerier_ArrayNested2(t *testing.T) {
 func TestNewQuerier_Nested3(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
 	ctx := context.Background()

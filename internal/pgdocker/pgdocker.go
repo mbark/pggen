@@ -21,7 +21,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerClient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/ports"

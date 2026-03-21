@@ -115,7 +115,10 @@ func getTypePackage(typ Type) string {
 	}
 }
 
-func QualifyType(typ Type, otherPkgPath string) string {
+// QualifyType returns the Go qualified type string for typ, relative to
+// otherPkgPath. If aliases is non-nil, it maps full package paths to import
+// aliases for resolving name collisions.
+func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
 	sb := &strings.Builder{}
 	arrType, isArr := typ.(*ArrayType)
 	if isArr {
@@ -140,7 +143,14 @@ func QualifyType(typ Type, otherPkgPath string) string {
 	}
 	sb.Grow(len(typ.BaseName()))
 	if typ.Import() != "" {
-		shortPkg := ExtractShortPackage([]byte(pkg))
+		// Check for an import alias first.
+		shortPkg := ""
+		if len(aliases) > 0 && aliases[0] != nil {
+			shortPkg = aliases[0][pkg]
+		}
+		if shortPkg == "" {
+			shortPkg = ExtractShortPackage([]byte(pkg))
+		}
 		sb.WriteString(shortPkg)
 		sb.WriteRune('.')
 	}
@@ -205,8 +215,21 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 	if isPtr {
 		bs = bs[1:]
 	}
-	idx := bytes.LastIndexByte(bs, '.')
+	idx := lastDotOutsideBrackets(bs)
 	name := string(bs[idx+1:])
+	// For generic types like Range[github.com/jackc/pgx/v5/pgtype.Int8],
+	// shorten the fully qualified type inside brackets to use the short
+	// package name, e.g. Range[pgtype.Int8].
+	if bracketIdx := strings.IndexByte(name, '['); bracketIdx != -1 {
+		inner := name[bracketIdx+1:]
+		inner = strings.TrimSuffix(inner, "]")
+		if dotIdx := lastDotOutsideBrackets([]byte(inner)); dotIdx != -1 {
+			innerPkg := inner[:dotIdx]
+			innerName := inner[dotIdx+1:]
+			shortPkg := ExtractShortPackage([]byte(innerPkg))
+			name = name[:bracketIdx+1] + shortPkg + "." + innerName + "]"
+		}
+	}
 	var typ Type = &OpaqueType{Name: name}
 	// On array types, the PgType goes on the Array. In all other cases, it
 	// goes on the OpaqueType.
@@ -264,6 +287,29 @@ var majorVersionRegexp = regexp.MustCompile(`^v[0-9]+$`)
 
 // ExtractShortPackage gets the last part of a package path like "generate" in
 // "github.com/mbark/pggen/generate".
+// lastDotOutsideBrackets returns the index of the last '.' in bs that is not
+// inside '[' ... ']' brackets. Returns -1 if no such dot exists. This is
+// needed to correctly split generic types like
+// "github.com/jackc/pgx/v5/pgtype.Range[github.com/jackc/pgx/v5/pgtype.Int8]"
+// into package path and type name.
+func lastDotOutsideBrackets(bs []byte) int {
+	depth := 0
+	last := -1
+	for i, b := range bs {
+		switch b {
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case '.':
+			if depth == 0 {
+				last = i
+			}
+		}
+	}
+	return last
+}
+
 func ExtractShortPackage(pkgPath []byte) string {
 	parts := bytes.Split(pkgPath, []byte{'/'})
 	shortPkg := parts[len(parts)-1]

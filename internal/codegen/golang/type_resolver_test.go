@@ -2,7 +2,7 @@ package golang
 
 import (
 	"github.com/google/go-cmp/cmp"
-	"github.com/jackc/pgtype"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mbark/pggen/internal/casing"
 	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 	"github.com/mbark/pggen/internal/difftest"
@@ -88,7 +88,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:   pg.BaseType{Name: "point", ID: pgtype.PointOID},
 			nullable: false,
 			want: &gotype.ImportType{
-				PkgPath: "github.com/jackc/pgtype",
+				PkgPath: "github.com/jackc/pgx/v5/pgtype",
 				Type: &gotype.OpaqueType{
 					PgType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
 					Name:   "Point",
@@ -100,7 +100,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:   pg.BaseType{Name: "point", ID: pgtype.PointOID},
 			nullable: true,
 			want: &gotype.ImportType{
-				PkgPath: "github.com/jackc/pgtype",
+				PkgPath: "github.com/jackc/pgx/v5/pgtype",
 				Type: &gotype.OpaqueType{
 					PgType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
 					Name:   "Point",
@@ -138,6 +138,26 @@ func TestTypeResolver_Resolve(t *testing.T) {
 					PkgPath: "example.com/custom",
 					Type:    &gotype.OpaqueType{Name: "F32"},
 				},
+			},
+		},
+		{
+			name:     "date array",
+			pgType:   pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
+			nullable: false,
+			want: &gotype.ArrayType{
+				PgArray: pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
+				Elem: &gotype.ImportType{
+					PkgPath: "github.com/jackc/pgx/v5/pgtype",
+					Type:    &gotype.OpaqueType{Name: "Date"},
+				},
+			},
+		},
+		{
+			name:     "nullable enum",
+			pgType:   pgDeviceEnum,
+			nullable: true,
+			want: &gotype.PointerType{
+				Elem: &gotype.ImportType{PkgPath: testPkgPath, Type: goDeviceEnum},
 			},
 		},
 		{

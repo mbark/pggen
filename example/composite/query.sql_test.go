@@ -2,8 +2,8 @@ package composite
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mbark/pggen/internal/difftest"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgtest"
@@ -13,9 +13,23 @@ import (
 	"testing"
 )
 
+// registerCitext registers the citext extension type with the connection's
+// TypeMap. pgx v5's LoadTypes cannot auto-register extension base types, so
+// this must be done before RegisterTypes when composites reference citext.
+func registerCitext(t *testing.T, ctx context.Context, conn *pgx.Conn) {
+	t.Helper()
+	var oid uint32
+	err := conn.QueryRow(ctx, "SELECT oid FROM pg_type WHERE typname = 'citext'").Scan(&oid)
+	require.NoError(t, err)
+	conn.TypeMap().RegisterType(&pgtype.Type{Name: "citext", OID: oid, Codec: &pgtype.TextCodec{}})
+}
+
 func TestNewQuerier_SearchScreenshots(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	ctx := context.Background()
+	registerCitext(t, ctx, conn)
+	require.NoError(t, RegisterTypes(ctx, conn))
 
 	q := NewQuerier(conn)
 	screenshotID := 99
@@ -91,6 +105,9 @@ func TestNewQuerier_SearchScreenshots(t *testing.T) {
 func TestNewQuerier_ArraysInput(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	ctx := context.Background()
+	registerCitext(t, ctx, conn)
+	require.NoError(t, RegisterTypes(ctx, conn))
 
 	q := NewQuerier(conn)
 
@@ -110,6 +127,9 @@ func TestNewQuerier_ArraysInput(t *testing.T) {
 func TestNewQuerier_UserEmails(t *testing.T) {
 	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	defer cleanup()
+	ctx := context.Background()
+	registerCitext(t, ctx, conn)
+	require.NoError(t, RegisterTypes(ctx, conn))
 
 	q := NewQuerier(conn)
 
@@ -117,7 +137,7 @@ func TestNewQuerier_UserEmails(t *testing.T) {
 	require.NoError(t, err)
 	want := UserEmail{
 		ID:    "foo",
-		Email: pgtype.Text{String: "bar@example.com", Status: pgtype.Present},
+		Email: pgtype.Text{String: "bar@example.com", Valid: true},
 	}
 	difftest.AssertSame(t, want, got)
 }

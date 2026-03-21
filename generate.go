@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
 	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/codegen/golang"
@@ -147,7 +147,7 @@ func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func
 			if err != nil {
 				return errors.Join(e, err)
 			}
-			return fmt.Errorf("Container logs for Postgres container:\n\n%s\n\n%w", logs, e)
+			return fmt.Errorf("container logs for Postgres container:\n\n%s\n\n%w", logs, e)
 		}
 		return pgConn, errEnricher, stopDocker, nil
 	}

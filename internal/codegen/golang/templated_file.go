@@ -23,7 +23,8 @@ type TemplatedFile struct {
 	GoPkg      string           // the name of the Go package to use for the "package foo" declaration
 	SourcePath string           // absolute path to source SQL file
 	Queries    []TemplatedQuery // the queries with all template information
-	Imports    []string         // Go imports
+	Imports    []ImportPkg      // Go imports, with aliases for collisions
+	RawImports []string         // Go import paths (no aliases), for internal use
 	// True if this file is the leader file. The leader defines common code used
 	// by all queries in the same directory. Only one leader per directory.
 	IsLeader bool
@@ -151,32 +152,9 @@ func (tq TemplatedQuery) EmitParamStruct() string {
 // EmitParamNames emits the TemplatedQuery.Inputs into comma separated names
 // for use in a method invocation.
 func (tq TemplatedQuery) EmitParamNames() string {
-	appendParam := func(sb *strings.Builder, typ gotype.Type, name string) {
-		switch typ := gotype.UnwrapNestedType(typ).(type) {
-		case *gotype.CompositeType:
-			sb.WriteString("q.types.")
-			sb.WriteString(NameCompositeInitFunc(typ))
-			sb.WriteString("(")
-			sb.WriteString(name)
-			sb.WriteString(")")
-		case *gotype.ArrayType:
-			if gotype.IsPgxSupportedArray(typ) {
-				sb.WriteString(name)
-				break
-			}
-			switch gotype.UnwrapNestedType(typ.Elem).(type) {
-			case *gotype.CompositeType, *gotype.EnumType:
-				sb.WriteString("q.types.")
-				sb.WriteString(NameArrayInitFunc(typ))
-				sb.WriteString("(")
-				sb.WriteString(name)
-				sb.WriteString(")")
-			default:
-				sb.WriteString(name)
-			}
-		default:
-			sb.WriteString(name)
-		}
+	appendParam := func(sb *strings.Builder, _ gotype.Type, name string) {
+		// In pgx v5, all types are passed directly - no transcoder wrapping needed.
+		sb.WriteString(name)
 	}
 	switch {
 	case tq.isInlineParams():
@@ -217,37 +195,17 @@ func (tq TemplatedQuery) EmitRowScanArgs() (string, error) {
 	sb.Grow(15 * len(tq.Outputs))
 	for i, out := range tq.Outputs {
 		switch typ := gotype.UnwrapNestedType(out.Type).(type) {
-		case *gotype.ArrayType:
-			switch gotype.UnwrapNestedType(typ.Elem).(type) {
-			case *gotype.EnumType, *gotype.CompositeType:
-				sb.WriteString(out.LowerName)
-				sb.WriteString("Array")
-			default:
-				if hasOnlyOneNonVoid {
-					sb.WriteString("&item")
-				} else {
-					sb.WriteString("&item.")
-					sb.WriteString(out.UpperName)
-				}
-			}
+		case *gotype.VoidType:
+			sb.WriteString("nil")
 
-		case *gotype.CompositeType:
-			sb.WriteString(out.LowerName)
-			sb.WriteString("Row")
-
-		case *gotype.EnumType, *gotype.OpaqueType:
+		default:
+			_ = typ
 			if hasOnlyOneNonVoid {
 				sb.WriteString("&item")
 			} else {
 				sb.WriteString("&item.")
 				sb.WriteString(out.UpperName)
 			}
-
-		case *gotype.VoidType:
-			sb.WriteString("nil")
-
-		default:
-			return "", fmt.Errorf("unhandled type to emit row scan: %s %T", typ.BaseName(), typ)
 		}
 		if i < len(tq.Outputs)-1 {
 			sb.WriteString(", ")
@@ -323,91 +281,15 @@ func (tq TemplatedQuery) EmitResultTypeInit(name string) (string, error) {
 }
 
 // EmitResultDecoders declares all initialization required for output types.
+// In pgx v5, scanning is direct so no decoders are needed.
 func (tq TemplatedQuery) EmitResultDecoders() (string, error) {
-	sb := &strings.Builder{}
-	const indent = "\n\t" // 1 level indent inside querier method
-	for _, out := range tq.Outputs {
-		switch typ := gotype.UnwrapNestedType(out.Type).(type) {
-		case *gotype.CompositeType:
-			sb.WriteString(indent)
-			sb.WriteString(out.LowerName)
-			sb.WriteString("Row := q.types.")
-			sb.WriteString(NameCompositeTranscoderFunc(typ))
-			sb.WriteString("()")
-		case *gotype.ArrayType:
-			switch gotype.UnwrapNestedType(typ.Elem).(type) {
-			case *gotype.EnumType, *gotype.CompositeType:
-				// For all other array elems, a normal array works.
-				sb.WriteString(indent)
-				sb.WriteString(out.LowerName)
-				sb.WriteString("Array := q.types.")
-				sb.WriteString(NameArrayTranscoderFunc(typ))
-				sb.WriteString("()")
-			}
-		default:
-			continue
-		}
-	}
-	return sb.String(), nil
+	return "", nil
 }
 
 // EmitResultAssigns writes all the assign statements after scanning the result
-// from pgx.
-//
-// Copies pgtype.CompositeFields representing a Postgres composite type into the
-// output struct.
-//
-// Copies pgtype.EnumArray fields into Go enum array types.
+// from pgx. In pgx v5, scanning is direct so no assigns are needed.
 func (tq TemplatedQuery) EmitResultAssigns(zeroVal string) (string, error) {
-	sb := &strings.Builder{}
-	indent := "\n\t"
-	if tq.ResultKind == ast.ResultKindMany {
-		indent += "\t" // a :many query processes items in a for loop
-	}
-	for _, out := range tq.Outputs {
-		switch typ := gotype.UnwrapNestedType(out.Type).(type) {
-		case *gotype.CompositeType:
-			sb.WriteString(indent)
-			sb.WriteString("if err := ")
-			sb.WriteString(out.LowerName)
-			sb.WriteString("Row.AssignTo(&item")
-			if len(removeVoidColumns(tq.Outputs)) > 1 {
-				sb.WriteRune('.')
-				sb.WriteString(out.UpperName)
-			}
-			sb.WriteString("); err != nil {")
-			sb.WriteString(indent)
-			sb.WriteString("\treturn ")
-			sb.WriteString(zeroVal)
-			sb.WriteString(", fmt.Errorf(\"assign ")
-			sb.WriteString(tq.Name)
-			sb.WriteString(" row: %w\", err)")
-			sb.WriteString(indent)
-			sb.WriteString("}")
-		case *gotype.ArrayType:
-			switch gotype.UnwrapNestedType(typ.Elem).(type) {
-			case *gotype.CompositeType, *gotype.EnumType:
-				sb.WriteString(indent)
-				sb.WriteString("if err := ")
-				sb.WriteString(out.LowerName)
-				sb.WriteString("Array.AssignTo(&item")
-				if len(removeVoidColumns(tq.Outputs)) > 1 {
-					sb.WriteRune('.')
-					sb.WriteString(out.UpperName)
-				}
-				sb.WriteString("); err != nil {")
-				sb.WriteString(indent)
-				sb.WriteString("\treturn ")
-				sb.WriteString(zeroVal)
-				sb.WriteString(", fmt.Errorf(\"assign ")
-				sb.WriteString(tq.Name)
-				sb.WriteString(" row: %w\", err)")
-				sb.WriteString(indent)
-				sb.WriteString("}")
-			}
-		}
-	}
-	return sb.String(), nil
+	return "", nil
 }
 
 // EmitResultElem returns the string representing a single item in the overall

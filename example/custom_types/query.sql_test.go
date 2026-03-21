@@ -2,8 +2,8 @@ package custom_types
 
 import (
 	"context"
-	"github.com/jackc/pgtype"
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mbark/pggen/internal/pgtest"
 	"github.com/mbark/pggen/internal/texts"
 	"github.com/stretchr/testify/assert"
@@ -52,15 +52,15 @@ func TestQuerier_CustomMyInt(t *testing.T) {
 			AND pn.nspname = current_schema()
 		LIMIT 1;
 	`))
-	oidVal := pgtype.OIDValue{}
-	err := row.Scan(&oidVal)
+	var oid uint32
+	err := row.Scan(&oid)
 	require.NoError(t, err)
-	t.Logf("my_int oid: %d", oidVal.Uint)
+	t.Logf("my_int oid: %d", oid)
 
-	conn.ConnInfo().RegisterDataType(pgtype.DataType{
-		Value: &pgtype.Int2{},
+	conn.TypeMap().RegisterType(&pgtype.Type{
+		Codec: pgtype.Int2Codec{},
 		Name:  "my_int",
-		OID:   oidVal.Uint,
+		OID:   oid,
 	})
 
 	q := NewQuerier(conn)

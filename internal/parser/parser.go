@@ -81,8 +81,8 @@ func (p *parser) next0() {
 	// is not initialized (it is token.ILLEGAL), so don't print it.
 	if p.trace && p.pos.IsValid() {
 		s := p.tok.String()
-		switch {
-		case p.tok == token.String || p.tok == token.QueryFragment:
+		switch p.tok {
+		case token.String, token.QueryFragment:
 			lit := p.lit
 			// Simplify trace expression.
 			if lit != "" {
