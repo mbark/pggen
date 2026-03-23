@@ -295,6 +295,11 @@ func parsePragmas(allPragmas string) (ast.Pragmas, error) {
 				return ast.Pragmas{}, err
 			}
 			qp.ProtobufType = p
+		case "output":
+			if err := validateOutputType(val); err != nil {
+				return ast.Pragmas{}, err
+			}
+			qp.OutputType = val
 		default:
 			return ast.Pragmas{}, fmt.Errorf("unsupported pramga %q", key)
 		}
@@ -325,6 +330,25 @@ func validateProtoMsgType(val string) (string, error) {
 		}
 	}
 	return val, nil
+}
+
+// validateOutputType checks that val is a valid Go exported identifier.
+func validateOutputType(val string) error {
+	if val == "" {
+		return fmt.Errorf("output type must not be empty")
+	}
+	for i, r := range val {
+		if i == 0 {
+			if r < 'A' || r > 'Z' {
+				return fmt.Errorf("output type must start with an uppercase letter; got %q", val)
+			}
+			continue
+		}
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+			return fmt.Errorf("output type must only contain [a-zA-Z0-9_]; got %q", val)
+		}
+	}
+	return nil
 }
 
 // argPos is the name and position of expression like pggen.arg('foo').

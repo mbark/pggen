@@ -76,6 +76,7 @@ const (
 // Pragmas are options to control generated code for a single query.
 type Pragmas struct {
 	ProtobufType string // package qualified protocol buffer message type to use for output rows
+	OutputType   string // user-specified output row struct name, e.g. "ItemRow"
 }
 
 // An query is represented by one of the following query nodes.

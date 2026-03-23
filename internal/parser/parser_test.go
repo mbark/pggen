@@ -120,6 +120,30 @@ func TestParseFile_Queries(t *testing.T) {
 				Pragmas:     ast.Pragmas{ProtobufType: "Bar"},
 			},
 		},
+		{
+			"-- name: FindItems :many output=ItemRow\nSELECT 1;",
+			&ast.SourceQuery{
+				Name:        "FindItems",
+				Doc:         &ast.CommentGroup{List: []*ast.LineComment{{Text: "-- name: FindItems :many output=ItemRow"}}},
+				SourceSQL:   "SELECT 1;",
+				PreparedSQL: "SELECT 1;",
+				ParamNames:  nil,
+				ResultKind:  ast.ResultKindMany,
+				Pragmas:     ast.Pragmas{OutputType: "ItemRow"},
+			},
+		},
+		{
+			"-- name: GetItem :one output=ItemRow\nSELECT 1;",
+			&ast.SourceQuery{
+				Name:        "GetItem",
+				Doc:         &ast.CommentGroup{List: []*ast.LineComment{{Text: "-- name: GetItem :one output=ItemRow"}}},
+				SourceSQL:   "SELECT 1;",
+				PreparedSQL: "SELECT 1;",
+				ParamNames:  nil,
+				ResultKind:  ast.ResultKindOne,
+				Pragmas:     ast.Pragmas{OutputType: "ItemRow"},
+			},
+		},
 	}
 
 	for _, tt := range tests {

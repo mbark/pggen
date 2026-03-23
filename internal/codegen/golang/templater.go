@@ -7,6 +7,7 @@ import (
 	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 	"github.com/mbark/pggen/internal/gomod"
 	"github.com/mbark/pggen/internal/pginfer"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -75,6 +76,13 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 		}
 		allDeclarers.AddAll(NewTypeRegistrationDeclarer(names))
 	}
+
+	// Build shared row struct declarers for queries with output= pragma.
+	sharedRowDeclarers, err := tm.buildSharedRowDeclarers(goQueryFiles)
+	if err != nil {
+		return nil, err
+	}
+	allDeclarers.AddAll(sharedRowDeclarers...)
 
 	// Add declarers to leader file.
 	goQueryFiles[firstIndex].Declarers = allDeclarers.ListAll()
@@ -235,6 +243,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			Inputs:           inputs,
 			Outputs:          outputs,
 			InlineParamCount: tm.inlineParamCount,
+			OutputType:       qd.query.OutputType,
 		})
 	}
 
@@ -275,4 +284,141 @@ func (tm Templater) chooseLowerName(pgName string, fallback string, idx int, num
 		suffix = fmt.Sprintf("%2d", idx)
 	}
 	return fallback + suffix
+}
+
+// buildSharedRowDeclarers collects all queries with output= pragma, validates
+// that queries sharing the same output type have compatible columns, merges
+// nullability (widening to pointer types), and returns Declarers for the shared
+// row structs.
+func (tm Templater) buildSharedRowDeclarers(files []TemplatedFile) ([]Declarer, error) {
+	// Collect queries grouped by OutputType.
+	type queryRef struct {
+		fileName  string
+		queryName string
+		outputs   []TemplatedColumn
+	}
+	groups := make(map[string][]queryRef)
+	// Process files and queries in deterministic order (files are already sorted).
+	for _, f := range files {
+		for _, q := range f.Queries {
+			if q.OutputType == "" {
+				continue
+			}
+			groups[q.OutputType] = append(groups[q.OutputType], queryRef{
+				fileName:  f.SourcePath,
+				queryName: q.Name,
+				outputs:   removeVoidColumns(q.Outputs),
+			})
+		}
+	}
+
+	if len(groups) == 0 {
+		return nil, nil
+	}
+
+	// Sort output type names for deterministic processing.
+	outputTypeNames := make([]string, 0, len(groups))
+	for name := range groups {
+		outputTypeNames = append(outputTypeNames, name)
+	}
+	sort.Strings(outputTypeNames)
+
+	var declarers []Declarer
+	for _, outputType := range outputTypeNames {
+		refs := groups[outputType]
+
+		// Use the first query's column order as the canonical order.
+		first := refs[0]
+		if len(first.outputs) == 0 {
+			return nil, fmt.Errorf("output type %q on query %s has no output columns", outputType, first.queryName)
+		}
+
+		// Build a map from PgName -> column for the first query.
+		type mergedCol struct {
+			col      TemplatedColumn
+			nullable bool // track if any query has this column as nullable
+		}
+		colByName := make(map[string]*mergedCol, len(first.outputs))
+		colOrder := make([]string, len(first.outputs))
+		for i, col := range first.outputs {
+			_, isPtr := col.Type.(*gotype.PointerType)
+			colByName[col.PgName] = &mergedCol{col: col, nullable: isPtr}
+			colOrder[i] = col.PgName
+		}
+
+		// Validate and merge subsequent queries.
+		for _, ref := range refs[1:] {
+			if len(ref.outputs) != len(first.outputs) {
+				return nil, fmt.Errorf(
+					"output type %q: query %s has %d columns but query %s has %d columns",
+					outputType, first.queryName, len(first.outputs), ref.queryName, len(ref.outputs),
+				)
+			}
+			for _, col := range ref.outputs {
+				mc, ok := colByName[col.PgName]
+				if !ok {
+					// Collect the column names from the first query for the error.
+					firstCols := make([]string, len(first.outputs))
+					for i, c := range first.outputs {
+						firstCols[i] = c.PgName
+					}
+					refCols := make([]string, len(ref.outputs))
+					for i, c := range ref.outputs {
+						refCols[i] = c.PgName
+					}
+					return nil, fmt.Errorf(
+						"output type %q: query %s has column %q not present in query %s; "+
+							"%s columns: %v, %s columns: %v",
+						outputType, ref.queryName, col.PgName, first.queryName,
+						first.queryName, firstCols, ref.queryName, refCols,
+					)
+				}
+
+				// Check type compatibility: base types must match.
+				baseExisting := unwrapPointer(mc.col.Type)
+				baseNew := unwrapPointer(col.Type)
+				if baseExisting.BaseName() != baseNew.BaseName() {
+					return nil, fmt.Errorf(
+						"output type %q: column %q has incompatible types: %s in query %s vs %s in query %s",
+						outputType, col.PgName,
+						mc.col.QualType, first.queryName,
+						col.QualType, ref.queryName,
+					)
+				}
+
+				// Widen nullability: if the new column is a pointer, mark as nullable.
+				if _, isPtr := col.Type.(*gotype.PointerType); isPtr {
+					mc.nullable = true
+				}
+			}
+		}
+
+		// Build the final merged columns in the canonical order.
+		merged := make([]TemplatedColumn, len(colOrder))
+		for i, pgName := range colOrder {
+			mc := colByName[pgName]
+			col := mc.col
+			// If any query had this column as nullable but the first didn't,
+			// widen to pointer type.
+			if mc.nullable {
+				if _, isPtr := col.Type.(*gotype.PointerType); !isPtr {
+					col.Type = &gotype.PointerType{Elem: col.Type}
+					col.QualType = "*" + col.QualType
+				}
+			}
+			merged[i] = col
+		}
+
+		declarers = append(declarers, NewSharedRowDeclarer(outputType, merged))
+	}
+
+	return declarers, nil
+}
+
+// unwrapPointer returns the underlying type if t is a PointerType, otherwise t.
+func unwrapPointer(t gotype.Type) gotype.Type {
+	if pt, ok := t.(*gotype.PointerType); ok {
+		return pt.Elem
+	}
+	return t
 }

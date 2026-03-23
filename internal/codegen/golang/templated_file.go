@@ -43,6 +43,7 @@ type TemplatedQuery struct {
 	Inputs           []TemplatedParam  // input parameters to the query
 	Outputs          []TemplatedColumn // output columns of the query
 	InlineParamCount int               // inclusive count of params that will be inlined
+	OutputType       string            // user-specified shared output row struct name, empty if not set
 }
 
 type TemplatedParam struct {
@@ -59,6 +60,16 @@ type TemplatedColumn struct {
 	LowerName string // name in Go-style (lowerCamelCase)
 	Type      gotype.Type
 	QualType  string // package qualified Go type to use for the column, like "pgtype.Text"
+}
+
+// rowTypeName returns the name of the row struct type for this query.
+// If OutputType is set (via output= pragma), it uses that; otherwise defaults
+// to Name + "Row".
+func (tq TemplatedQuery) rowTypeName() string {
+	if tq.OutputType != "" {
+		return tq.OutputType
+	}
+	return tq.Name + "Row"
 }
 
 func (tf TemplatedFile) needsPgconnImport() bool {
@@ -228,7 +239,7 @@ func (tq TemplatedQuery) EmitResultType() (string, error) {
 		case 1:
 			return "[]" + outs[0].QualType, nil
 		default:
-			return "[]" + tq.Name + "Row", nil
+			return "[]" + tq.rowTypeName(), nil
 		}
 	case ast.ResultKindOne:
 		switch len(outs) {
@@ -237,7 +248,7 @@ func (tq TemplatedQuery) EmitResultType() (string, error) {
 		case 1:
 			return outs[0].QualType, nil
 		default:
-			return tq.Name + "Row", nil
+			return tq.rowTypeName(), nil
 		}
 	default:
 		return "", fmt.Errorf("unhandled EmitResultType kind: %s", tq.ResultKind)
@@ -364,6 +375,9 @@ func (tq TemplatedQuery) EmitRowStruct() string {
 	case ast.ResultKindExec:
 		return ""
 	case ast.ResultKindOne, ast.ResultKindMany:
+		if tq.OutputType != "" {
+			return "" // shared struct emitted via SharedRowDeclarer
+		}
 		outs := removeVoidColumns(tq.Outputs)
 		if len(outs) <= 1 {
 			return "" // if there's only 1 output column, return it directly
