@@ -396,7 +396,39 @@ Examples embedded in the repo:
     
     - pgx is able to use reflection to build an object to write fields into.
 
--   **Nested structs (composite types)**: pggen creates child structs to 
+-   **Shared output types**: Multiple queries that return the same columns can
+    share a single output struct by using the `output` pragma. This avoids
+    generating duplicate structs that require tedious field-by-field conversion.
+
+    ```sql
+    -- name: FindItems :many output=ItemRow
+    SELECT id, name, price FROM items WHERE active = true;
+
+    -- name: GetItemByID :one output=ItemRow
+    SELECT id, name, price FROM items WHERE id = pggen.arg('id');
+    ```
+
+    Both queries use a single shared `ItemRow` struct:
+
+    ```go
+    type ItemRow struct {
+        ID    int32  `json:"id"`
+        Name  string `json:"name"`
+        Price int32  `json:"price"`
+    }
+
+    func (q *DBQuerier) FindItems(ctx context.Context) ([]ItemRow, error) {}
+    func (q *DBQuerier) GetItemByID(ctx context.Context, id int32) (ItemRow, error) {}
+    ```
+
+    When queries sharing the same output type differ in column nullability (e.g.
+    one query returns `string` and another returns `*string` for the same column
+    due to a LEFT JOIN), pggen widens the shared struct to use the pointer type.
+
+    All queries sharing the same `output` value must return the same set of column
+    names with compatible types. Column order in the queries does not matter.
+
+-   **Nested structs (composite types)**: pggen creates child structs to
     represent Postgres [composite types] that appear in output columns.
 
     ```sql
