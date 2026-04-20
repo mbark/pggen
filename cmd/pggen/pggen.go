@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/mbark/pggen"
 	"github.com/mbark/pggen/internal/flags"
 	"github.com/mbark/pggen/internal/texts"

@@ -5,11 +5,11 @@ jobs:
     name: lint
     runs-on: buildjet-4vcpu-ubuntu-2204
     steps:
-      - uses: buildjet/setup-go@v4
+      - uses: buildjet/setup-go@v5
         with:
           go-version: 1.21.5
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.55.2
+          version: v2.11.4
