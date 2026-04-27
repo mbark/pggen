@@ -344,7 +344,7 @@ func validateOutputType(val string) error {
 			}
 			continue
 		}
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
 			return fmt.Errorf("output type must only contain [a-zA-Z0-9_]; got %q", val)
 		}
 	}
