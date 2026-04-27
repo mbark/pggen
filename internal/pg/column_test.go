@@ -78,7 +78,7 @@ func findTableOID(t *testing.T, conn *pgx.Conn, table string) uint32 {
 		SELECT oid AS table_oid
 		FROM pg_class
 		WHERE relname = $1
-		ORDER BY table_oid DESC
+		  AND relnamespace = current_schema()::regnamespace
 		LIMIT 1;
 	`)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

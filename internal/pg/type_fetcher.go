@@ -149,9 +149,13 @@ func (tf *TypeFetcher) findCompositeTypes(ctx context.Context, uncached map[uint
 				colNames[i] = row.ColNames[i]
 			}
 		}
+		var tableName string
+		if row.TableName != nil {
+			tableName = *row.TableName
+		}
 		typ := CompositeType{
 			ID:          row.TableTypeOID,
-			Name:        row.TableName,
+			Name:        tableName,
 			ColumnNames: colNames,
 			ColumnTypes: colTypes,
 		}
@@ -170,12 +174,16 @@ func (tf *TypeFetcher) findUnknownTypes(ctx context.Context, uncached map[uint32
 	types := make([]UnknownType, len(rows))
 	for i, row := range rows {
 		var kind TypeKind
-		if len(row.Kind) > 0 {
-			kind = TypeKind(row.Kind[0])
+		if row.Kind != nil {
+			kind = TypeKind(*row.Kind)
+		}
+		var name string
+		if row.Name != nil {
+			name = *row.Name
 		}
 		types[i] = UnknownType{
 			ID:     row.OID,
-			Name:   row.Name,
+			Name:   name,
 			PgKind: kind,
 		}
 	}

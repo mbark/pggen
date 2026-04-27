@@ -1,11 +1,11 @@
 module github.com/mbark/pggen
 
-go 1.23.0
+go 1.26.0
 
-toolchain go1.23.1
+toolchain go1.26.2
 
 require (
-	github.com/bmatcuk/doublestar v1.3.4
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/docker/docker v28.0.0+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/google/go-cmp v0.6.0

@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bmatcuk/doublestar"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/mbark/pggen"
 	"github.com/mbark/pggen/internal/flags"
 	"github.com/mbark/pggen/internal/texts"
@@ -211,10 +211,14 @@ func expandSortGlobs(globs []string) ([]string, error) {
 			}
 			matches = append(matches, glob)
 		} else {
-			ms, err := doublestar.Glob(glob)
+			base, pattern := doublestar.SplitPattern(filepath.ToSlash(glob))
+			ms, err := doublestar.Glob(os.DirFS(base), pattern)
 			if err != nil {
 				// Ignore err, it's not helpful.
 				return nil, fmt.Errorf("bad glob pattern: %s", glob)
+			}
+			for i, m := range ms {
+				ms[i] = filepath.Join(base, m)
 			}
 			sort.Strings(ms)
 			matches = ms
