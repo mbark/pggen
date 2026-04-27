@@ -17,7 +17,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
 	dockerClient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -151,7 +151,7 @@ func (c *Client) buildImage(ctx context.Context, initScripts []string) (id strin
 	slog.DebugContext(ctx, "wrote tar dockerfile into buffer")
 
 	// Send build request.
-	opts := types.ImageBuildOptions{Dockerfile: "Dockerfile"}
+	opts := build.ImageBuildOptions{Dockerfile: "Dockerfile"}
 	resp, err := c.docker.ImageBuild(ctx, tarR, opts)
 	if err != nil {
 		return "", fmt.Errorf("build postgres docker image: %w", err)
