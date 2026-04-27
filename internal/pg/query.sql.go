@@ -73,7 +73,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn genericConn // underlying Postgres transport to use
+	conn  genericConn   // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -95,6 +95,26 @@ type genericBatch interface {
 // *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
+}
+
+// RegisterTypes registers custom Postgres types (composites and enums) with
+// the pgx connection's TypeMap so that they can be scanned and encoded
+// correctly. Call this once per connection after connecting.
+//
+// For pgxpool.Pool, use config.AfterConnect:
+//
+//	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+//		return RegisterTypes(ctx, conn)
+//	}
+func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
+	_, err := conn.LoadTypes(ctx, []string{
+		"_bool",
+		"_float4",
+		"_int8",
+		"_oid",
+		"_text",
+	})
+	return err
 }
 
 const findEnumTypesSQL = `WITH enums AS (
@@ -127,7 +147,7 @@ SELECT
   -- typtype: b for a base type, c for a composite type (e.g., a table's
   -- row type), d for a domain, e for an enum type, p for a pseudo-type,
   -- or r for a range type.
-  typ.typtype::text AS type_kind,
+  typ.typtype       AS type_kind,
   -- typdefault is null if the type has no associated default value. If
   -- typdefaultbin is not null, typdefault must contain a human-readable
   -- version of the default expression represented by typdefaultbin. If
@@ -147,7 +167,7 @@ type FindEnumTypesRow struct {
 	ChildOIDs   []int     `json:"child_oids"`
 	Orders      []float32 `json:"orders"`
 	Labels      []string  `json:"labels"`
-	TypeKind    string    `json:"type_kind"`
+	TypeKind    *int32    `json:"type_kind"`
 	DefaultExpr string    `json:"default_expr"`
 }
 
@@ -207,14 +227,14 @@ const findArrayTypesSQL = `SELECT
   -- typtype: b for a base type, c for a composite type (e.g., a table's
   -- row type), d for a domain, e for an enum type, p for a pseudo-type,
   -- or r for a range type.
-  arr_typ.typtype::text AS type_kind
+  arr_typ.typtype       AS type_kind
 FROM pg_type arr_typ
   JOIN pg_type elem_typ ON arr_typ.typelem = elem_typ.oid
 WHERE arr_typ.typisdefined
   AND arr_typ.typtype = 'b' -- Array types are base types
   -- If typelem is not 0 then it identifies another row in pg_type. The current
   -- type can then be subscripted like an array yielding values of type typelem.
-  -- A "true" array type is variable length (typlen = -1), but some
+  -- A “true” array type is variable length (typlen = -1), but some
   -- fixed-length (typlen > 0) types also have nonzero typelem, for example
   -- name and point. If a fixed-length type has a typelem then its internal
   -- representation must be some number of values of the typelem data type with
@@ -232,7 +252,7 @@ type FindArrayTypesRow struct {
 	OID      uint32 `json:"oid"`
 	TypeName string `json:"type_name"`
 	ElemOID  uint32 `json:"elem_oid"`
-	TypeKind string `json:"type_kind"`
+	TypeKind *int32 `json:"type_kind"`
 }
 
 // FindArrayTypes implements Querier.FindArrayTypes.
@@ -316,7 +336,7 @@ WHERE typ.oid = ANY ($1::oid[])
 type FindCompositeTypesRow struct {
 	TableTypeName string   `json:"table_type_name"`
 	TableTypeOID  uint32   `json:"table_type_oid"`
-	TableName     string   `json:"table_name"`
+	TableName     *string  `json:"table_name"`
 	ColNames      []string `json:"col_names"`
 	ColOIDs       []int    `json:"col_oids"`
 	ColOrders     []int    `json:"col_orders"`
@@ -480,7 +500,7 @@ func (q *DBQuerier) FindOIDByNameScan(results pgx.BatchResults) (uint32, error) 
 	return item, nil
 }
 
-const findOIDNameSQL = `SELECT typname::text AS name
+const findOIDNameSQL = `SELECT typname AS name
 FROM pg_type
 WHERE oid = $1;`
 
@@ -510,14 +530,14 @@ func (q *DBQuerier) FindOIDNameScan(results pgx.BatchResults) (string, error) {
 	return item, nil
 }
 
-const findOIDNamesSQL = `SELECT oid, typname::text AS name, typtype::text AS kind
+const findOIDNamesSQL = `SELECT oid, typname AS name, typtype AS kind
 FROM pg_type
 WHERE oid = ANY ($1::oid[]);`
 
 type FindOIDNamesRow struct {
-	OID  uint32 `json:"oid"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	OID  uint32  `json:"oid"`
+	Name *string `json:"name"`
+	Kind *int32  `json:"kind"`
 }
 
 // FindOIDNames implements Querier.FindOIDNames.
