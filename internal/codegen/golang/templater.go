@@ -167,8 +167,13 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			if i > 0 {
 				docs.WriteByte('\t')
 			}
-			docs.WriteString("// ")
-			docs.WriteString(d)
+			// Avoid a trailing space on empty doc lines.
+			if d == "" {
+				docs.WriteString("//")
+			} else {
+				docs.WriteString("// ")
+				docs.WriteString(d)
+			}
 			docs.WriteRune('\n')
 		}
 
