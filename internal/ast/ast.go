@@ -77,6 +77,41 @@ const (
 type Pragmas struct {
 	ProtobufType string // package qualified protocol buffer message type to use for output rows
 	OutputType   string // user-specified output row struct name, e.g. "ItemRow"
+	Paginate     string // name of the -- sort: spec to fan this query out over, e.g. "payments_sort"
+}
+
+// SortSpec is a keyset-pagination spec declared in a "-- sort: <name>" comment
+// block. A query with the paginate=<name> pragma is fanned out into one
+// concrete statement per sort key and direction, plus a default, each with a
+// clean ORDER BY and a matching cursor predicate.
+type SortSpec struct {
+	Name      string          // spec name, e.g. "payments_sort"
+	Keys      []SortKey       // declared sort keys
+	DefaultBy []string        // columns for the default ordering (no sort key given)
+	Cursor    map[string]string // column -> cursor pggen.arg name; empty means ordering-only (no keyset predicate)
+	Tiebreak  string          // raw ORDER BY terms appended to every variant, e.g. "created_at DESC"
+}
+
+// IsKeyset reports whether this spec drives a keyset cursor predicate. Specs
+// without cursor bindings are ordering-only (offset pagination): they fan out
+// the ORDER BY but emit no pggen.keyset predicate.
+func (s SortSpec) IsKeyset() bool { return len(s.Cursor) > 0 }
+
+// SortKey is one runtime-selectable sort dimension within a SortSpec.
+type SortKey struct {
+	Name     string   // runtime SortOrder.Key value, e.g. "payment_date"
+	Columns  []string // ordered sort columns, the last being the unique tiebreaker
+	Nullable []string // subset of Columns that are nullable
+}
+
+// IsNullable reports whether col is declared nullable for this key.
+func (k SortKey) IsNullable(col string) bool {
+	for _, c := range k.Nullable {
+		if c == col {
+			return true
+		}
+	}
+	return false
 }
 
 // An query is represented by one of the following query nodes.
@@ -98,8 +133,23 @@ type (
 		ResultKind  ResultKind    // the result output type
 		Pragmas     Pragmas       // optional query options
 		Semi        gotok.Pos     // position of the closing semicolon
+
+		// Set when this query was produced by fanning out a paginate=<spec>
+		// query. VariantGroup is the public dispatcher name (the original query
+		// name); VariantKey identifies the sort key + direction. Empty for
+		// ordinary queries.
+		VariantGroup string
+		VariantKey   VariantKey
 	}
 )
+
+// VariantKey identifies one fanned-out statement within a paginated query
+// group.
+type VariantKey struct {
+	SortKey    string // the SortKey.Name, empty for the default variant
+	Descending bool   // direction; ignored for the default variant
+	IsDefault  bool   // true for the no-sort-key default variant
+}
 
 func (q *BadQuery) Pos() gotok.Pos { return q.From }
 func (q *BadQuery) End() gotok.Pos { return q.To }

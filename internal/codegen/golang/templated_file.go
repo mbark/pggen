@@ -25,11 +25,123 @@ type TemplatedFile struct {
 	Queries    []TemplatedQuery // the queries with all template information
 	Imports    []ImportPkg      // Go imports, with aliases for collisions
 	RawImports []string         // Go import paths (no aliases), for internal use
+	// Variants are the fanned-out paginate statements, emitted as unexported
+	// helper methods. Their public entry points are the PaginateGroups.
+	Variants []TemplatedQuery
+	// PaginateGroups are the keyset-pagination dispatchers, one per paginate
+	// query, each fronting a set of Variants.
+	PaginateGroups []PaginateGroup
 	// True if this file is the leader file. The leader defines common code used
 	// by all queries in the same directory. Only one leader per directory.
 	IsLeader bool
 	// Any declarations this file should declare. Only set on leader.
 	Declarers []Declarer
+}
+
+// SortKeyConst is a generated constant for a runtime sort key value.
+type SortKeyConst struct {
+	ConstName string // e.g. "ListSortPaymentDate"
+	Value     string // e.g. "payment_date"
+}
+
+// PaginateGroup is the public dispatcher for a paginate=<spec> query plus the
+// metadata needed to emit its unified params struct and sort-key constants.
+type PaginateGroup struct {
+	Name           string           // dispatcher / original query name, e.g. "List"
+	ParamsTypeName string           // unified params struct name, e.g. "ListParams"
+	UnifiedInputs  []TemplatedParam // union of every variant's inputs, by PgName
+	SortKeyConsts  []SortKeyConst   // distinct sort keys in the spec
+	Variants       []TemplatedQuery // fanned-out variants (default first)
+}
+
+func (pg PaginateGroup) representative() TemplatedQuery { return pg.Variants[0] }
+
+// EmitResultType returns the dispatcher result type, e.g. "[]PaymentRow".
+func (pg PaginateGroup) EmitResultType() (string, error) {
+	return pg.representative().EmitResultType()
+}
+
+// EmitSortKeyConsts emits the sort-key string constants.
+func (pg PaginateGroup) EmitSortKeyConsts() string {
+	if len(pg.SortKeyConsts) == 0 {
+		return ""
+	}
+	sb := &strings.Builder{}
+	sb.WriteString("\n\nconst (\n")
+	for _, c := range pg.SortKeyConsts {
+		sb.WriteString("\t")
+		sb.WriteString(c.ConstName)
+		sb.WriteString(" = ")
+		sb.WriteString(strconv.Quote(c.Value))
+		sb.WriteRune('\n')
+	}
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// EmitParamStruct emits the unified params struct: the union of all variant
+// inputs plus the synthetic SortKey and Descending dispatch fields.
+func (pg PaginateGroup) EmitParamStruct() string {
+	sb := &strings.Builder{}
+	sb.WriteString("\n\ntype ")
+	sb.WriteString(pg.ParamsTypeName)
+	sb.WriteString(" struct {\n")
+	for _, in := range pg.UnifiedInputs {
+		sb.WriteString("\t")
+		sb.WriteString(in.UpperName)
+		sb.WriteString(" ")
+		sb.WriteString(in.QualType)
+		sb.WriteString(" `json:")
+		sb.WriteString(strconv.Quote(in.RawName.PgName))
+		sb.WriteString("`\n")
+	}
+	sb.WriteString("\tSortKey string `json:\"sort_key\"`\n")
+	sb.WriteString("\tDescending bool `json:\"descending\"`\n")
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// EmitDispatcher emits the public dispatcher method switching on SortKey and
+// Descending to the matching variant helper.
+func (pg PaginateGroup) EmitDispatcher() (string, error) {
+	resultType, err := pg.EmitResultType()
+	if err != nil {
+		return "", err
+	}
+	constByValue := make(map[string]string, len(pg.SortKeyConsts))
+	for _, c := range pg.SortKeyConsts {
+		constByValue[c.Value] = c.ConstName
+	}
+
+	sb := &strings.Builder{}
+	fmt.Fprintf(sb, "\n\n// %s dispatches to the keyset-pagination variant matching\n", pg.Name)
+	sb.WriteString("// params.SortKey and params.Descending.\n")
+	fmt.Fprintf(sb, "func (q *DBQuerier) %s(ctx context.Context, params %s) (%s, error) {\n", pg.Name, pg.ParamsTypeName, resultType)
+	sb.WriteString("\tswitch {\n")
+	for _, v := range pg.Variants {
+		switch {
+		case v.VariantKey.IsDefault:
+			sb.WriteString("\tcase params.SortKey == \"\":\n")
+		case v.VariantKey.Descending:
+			fmt.Fprintf(sb, "\tcase params.SortKey == %s && params.Descending:\n", constByValue[v.VariantKey.SortKey])
+		default:
+			fmt.Fprintf(sb, "\tcase params.SortKey == %s && !params.Descending:\n", constByValue[v.VariantKey.SortKey])
+		}
+		fmt.Fprintf(sb, "\t\treturn q.%s(ctx, params)\n", v.VariantMethodName())
+	}
+	sb.WriteString("\tdefault:\n")
+	fmt.Fprintf(sb, "\t\treturn nil, fmt.Errorf(\"%s: unknown sort key %%q\", params.SortKey)\n", pg.Name)
+	sb.WriteString("\t}\n}")
+	return sb.String(), nil
+}
+
+// EmitInterfaceMethod emits the dispatcher signature for the Querier interface.
+func (pg PaginateGroup) EmitInterfaceMethod() (string, error) {
+	resultType, err := pg.EmitResultType()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s(ctx context.Context, params %s) (%s, error)", pg.Name, pg.ParamsTypeName, resultType), nil
 }
 
 // TemplatedQuery is a query with all information required to execute the
@@ -44,6 +156,67 @@ type TemplatedQuery struct {
 	Outputs          []TemplatedColumn // output columns of the query
 	InlineParamCount int               // inclusive count of params that will be inlined
 	OutputType       string            // user-specified shared output row struct name, empty if not set
+	VariantGroup     string            // dispatcher name when this query is a paginate variant, else empty
+	VariantKey       ast.VariantKey    // identifies the sort key + direction for a variant
+}
+
+// IsVariant reports whether this query is one fanned-out statement of a
+// paginate=<spec> query.
+func (tq TemplatedQuery) IsVariant() bool { return tq.VariantGroup != "" }
+
+// VariantMethodName is the unexported method name for a paginate variant, like
+// "listPaymentDateDesc" or "listDefault".
+func (tq TemplatedQuery) VariantMethodName() string {
+	return lowerFirst(tq.VariantGroup) + variantSuffix(tq.VariantKey)
+}
+
+// VariantParamsType is the unified params struct name shared by all variants in
+// the group, like "ListParams".
+func (tq TemplatedQuery) VariantParamsType() string { return tq.VariantGroup + "Params" }
+
+// EmitVariantParamNames emits this variant's inputs as struct-qualified args in
+// the variant's own order, for the call to q.conn.Query.
+func (tq TemplatedQuery) EmitVariantParamNames() string {
+	sb := &strings.Builder{}
+	for _, input := range tq.Inputs {
+		sb.WriteString(", params.")
+		sb.WriteString(input.UpperName)
+	}
+	return sb.String()
+}
+
+func variantSuffix(k ast.VariantKey) string {
+	if k.IsDefault {
+		return "Default"
+	}
+	dir := "Asc"
+	if k.Descending {
+		dir = "Desc"
+	}
+	return upperFirst(snakeToCamel(k.SortKey)) + dir
+}
+
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func snakeToCamel(s string) string {
+	parts := strings.Split(s, "_")
+	sb := &strings.Builder{}
+	for _, p := range parts {
+		sb.WriteString(upperFirst(p))
+	}
+	return sb.String()
 }
 
 type TemplatedParam struct {

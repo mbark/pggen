@@ -300,6 +300,11 @@ func parsePragmas(allPragmas string) (ast.Pragmas, error) {
 				return ast.Pragmas{}, err
 			}
 			qp.OutputType = val
+		case "paginate":
+			if val == "" {
+				return ast.Pragmas{}, fmt.Errorf("paginate spec name must not be empty")
+			}
+			qp.Paginate = val
 		default:
 			return ast.Pragmas{}, fmt.Errorf("unsupported pramga %q", key)
 		}
@@ -441,9 +446,15 @@ func (p *parser) parseFile() *ast.File {
 		queries = append(queries, p.parseQuery())
 	}
 
-	return &ast.File{
+	file := &ast.File{
 		Doc:      doc,
 		Queries:  queries,
 		Comments: p.comments,
 	}
+
+	if p.errors.Len() == 0 {
+		p.expandPaginatedQueries(file)
+	}
+
+	return file
 }

@@ -234,7 +234,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			}
 		}
 
-		queries = append(queries, TemplatedQuery{
+		tq := TemplatedQuery{
 			Name:             tm.caser.ToUpperGoIdent(qd.query.Name),
 			SQLVarName:       tm.caser.ToLowerGoIdent(qd.query.Name) + "SQL",
 			ResultKind:       qd.query.ResultKind,
@@ -244,18 +244,86 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			Outputs:          outputs,
 			InlineParamCount: tm.inlineParamCount,
 			OutputType:       qd.query.OutputType,
-		})
+			VariantGroup:     qd.query.VariantGroup,
+			VariantKey:       qd.query.VariantKey,
+		}
+		if tq.IsVariant() {
+			// Name the SQL const after the unexported helper so the generated
+			// code reads cleanly and stays unique per variant.
+			tq.SQLVarName = tq.VariantMethodName() + "SQL"
+		}
+		queries = append(queries, tq)
+	}
+
+	// Partition fanned-out variants from regular queries and build dispatcher
+	// groups in deterministic (first-seen) order.
+	var regular []TemplatedQuery
+	var variants []TemplatedQuery
+	var groupOrder []string
+	byGroup := make(map[string][]TemplatedQuery)
+	for _, q := range queries {
+		if !q.IsVariant() {
+			regular = append(regular, q)
+			continue
+		}
+		if _, ok := byGroup[q.VariantGroup]; !ok {
+			groupOrder = append(groupOrder, q.VariantGroup)
+		}
+		byGroup[q.VariantGroup] = append(byGroup[q.VariantGroup], q)
+		variants = append(variants, q)
+	}
+	var groups []PaginateGroup
+	for _, name := range groupOrder {
+		groups = append(groups, buildPaginateGroup(name, byGroup[name]))
 	}
 
 	return TemplatedFile{
-		PkgPath:    pkgPath,
-		GoPkg:      tm.pkg,
-		SourcePath: file.SourcePath,
-		Queries:    queries,
-		Imports:    imports.SortedImports(),
-		RawImports: imports.SortedPackages(),
-		IsLeader:   isLeader,
+		PkgPath:        pkgPath,
+		GoPkg:          tm.pkg,
+		SourcePath:     file.SourcePath,
+		Queries:        regular,
+		Variants:       variants,
+		PaginateGroups: groups,
+		Imports:        imports.SortedImports(),
+		RawImports:     imports.SortedPackages(),
+		IsLeader:       isLeader,
 	}, declarers, pgTypeNames, nil
+}
+
+// buildPaginateGroup assembles the dispatcher metadata for a set of variants:
+// the union of their inputs (by Postgres column name) and the distinct
+// sort-key constants.
+func buildPaginateGroup(name string, variants []TemplatedQuery) PaginateGroup {
+	var unified []TemplatedParam
+	seen := make(map[string]bool)
+	for _, v := range variants {
+		for _, in := range v.Inputs {
+			if seen[in.RawName.PgName] {
+				continue
+			}
+			seen[in.RawName.PgName] = true
+			unified = append(unified, in)
+		}
+	}
+	var consts []SortKeyConst
+	seenKey := make(map[string]bool)
+	for _, v := range variants {
+		if v.VariantKey.IsDefault || seenKey[v.VariantKey.SortKey] {
+			continue
+		}
+		seenKey[v.VariantKey.SortKey] = true
+		consts = append(consts, SortKeyConst{
+			ConstName: name + "Sort" + snakeToCamel(v.VariantKey.SortKey),
+			Value:     v.VariantKey.SortKey,
+		})
+	}
+	return PaginateGroup{
+		Name:           name,
+		ParamsTypeName: name + "Params",
+		UnifiedInputs:  unified,
+		SortKeyConsts:  consts,
+		Variants:       variants,
+	}
 }
 
 // chooseUpperName converts pgName into a capitalized Go identifier name.
@@ -300,7 +368,8 @@ func (tm Templater) buildSharedRowDeclarers(files []TemplatedFile) ([]Declarer, 
 	groups := make(map[string][]queryRef)
 	// Process files and queries in deterministic order (files are already sorted).
 	for _, f := range files {
-		for _, q := range f.Queries {
+		queries := append(append([]TemplatedQuery{}, f.Queries...), f.Variants...)
+		for _, q := range queries {
 			if q.OutputType == "" {
 				continue
 			}

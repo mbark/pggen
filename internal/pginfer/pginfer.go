@@ -38,6 +38,11 @@ type TypedQuery struct {
 	// User-specified output row struct name, like "ItemRow". If set, multiple
 	// queries can share the same output struct.
 	OutputType string
+	// Set when this query is one fanned-out statement of a paginate=<spec>
+	// query. VariantGroup is the public dispatcher name; VariantKey identifies
+	// the sort key + direction. Empty VariantGroup means an ordinary query.
+	VariantGroup string
+	VariantKey   ast.VariantKey
 }
 
 // InputParam is an input parameter for a prepared query.
@@ -102,6 +107,8 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (TypedQuery, error) {
 		Outputs:      outputs,
 		ProtobufType: query.Pragmas.ProtobufType,
 		OutputType:   query.Pragmas.OutputType,
+		VariantGroup: query.VariantGroup,
+		VariantKey:   query.VariantKey,
 	}, nil
 }
 
