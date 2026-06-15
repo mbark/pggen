@@ -428,6 +428,55 @@ Examples embedded in the repo:
     All queries sharing the same `output` value must return the same set of column
     names with compatible types. Column order in the queries does not matter.
 
+-   **Keyset / ordering pagination**: a list query that supports runtime-chosen
+    sorting normally needs a `CASE WHEN $flag THEN col END` block in both the
+    `ORDER BY` and the cursor `WHERE` — verbose, easy to desync, and not
+    index-usable (Postgres can't use a btree index behind a `CASE` sort). The
+    `paginate=<spec>` pragma plus a `-- sort:` block fan one query out into a
+    clean, concrete statement per sort key and direction behind a single
+    dispatcher method.
+
+    ```sql
+    -- sort: payments_sort
+    --   key payment_date: payment_date, payment_id
+    --   nullable: payment_date
+    --   default: payment_id
+    --   cursor: payment_date=cursor_payment_date, payment_id=cursor_payment_id
+
+    -- name: List :many output=PaymentRow paginate=payments_sort
+    SELECT id, payment_date FROM payments
+    WHERE status = pggen.arg('status')
+      AND pggen.keyset('payments_sort')
+    ORDER BY pggen.orderby('payments_sort');
+    ```
+
+    pggen generates one variant per key/direction (each with an index-usable
+    `ORDER BY payment_date DESC NULLS FIRST, payment_id DESC` and a matching
+    NULL-aware cursor predicate), the sort-key constants, a unified params struct
+    (filters + `SortKey` + `Descending` + cursor fields), and a dispatcher:
+
+    ```go
+    const ListSortPaymentDate = "payment_date"
+
+    func (q *DBQuerier) List(ctx context.Context, params ListParams) ([]PaymentRow, error) {
+        switch {
+        case params.SortKey == "":                                       // default ordering
+        case params.SortKey == ListSortPaymentDate && params.Descending: // DESC variant
+        case params.SortKey == ListSortPaymentDate && !params.Descending:// ASC variant
+        default: // unknown key -> error
+        }
+    }
+    ```
+
+    `-- sort:` directives: `key <name>: <col>[, <col>…]` declares a sort dimension
+    (the last column is the unique tiebreaker; columns may be expressions such as
+    `COALESCE(a, b)`); `nullable:` marks NULL-able columns; `default:` is the
+    ordering when no key is requested; `cursor: <col>=<arg>` binds cursor args
+    (its presence makes the spec keyset). Omit `cursor:`/`pggen.keyset(...)` for
+    ordering-only OFFSET pagination, and use `tiebreak: <terms>` to append a
+    stable trailing ordering to every variant. A paginated query must declare an
+    `output=` row type so every variant shares one return type.
+
 -   **Nested structs (composite types)**: pggen creates child structs to
     represent Postgres [composite types] that appear in output columns.
 
