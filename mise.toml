@@ -1,0 +1,75 @@
+# Tool versions for this repo, pinned to what CI installs so a local run and a
+# GitHub Actions run see the same compiler and linter.
+[tools]
+go = "1.26.2"              # matches the toolchain directive in go.mod
+golangci-lint = "v2.11.4"  # matches .github/workflows/go_lint.yaml
+
+[settings]
+experimental = true
+
+[env]
+# The acceptance tests reach the Docker daemon through the Go client, which
+# negotiates down to this API version. Mirrors the Makefile and CI.
+DOCKER_API_VERSION = "1.39"
+
+# Docker Desktop on macOS never creates /var/run/docker.sock, which is where the
+# Go client looks by default, so the acceptance tests cannot find the daemon.
+# That path is per-developer, so it stays out of this file — put it in a
+# gitignored mise.local.toml instead:
+#
+#   [env]
+#   DOCKER_HOST = "unix://{{ env.HOME }}/.docker/run/docker.sock"
+
+# --- Local Postgres ---
+
+[tasks.start]
+description = "Start the local Postgres container"
+run = "docker compose up -d"
+
+[tasks.stop]
+description = "Stop the local Postgres container"
+run = "docker compose down"
+
+[tasks.restart]
+description = "Recreate the local Postgres container"
+run = ["docker compose down", "docker compose up -d"]
+
+[tasks.psql]
+description = "Open psql against the local Postgres container"
+run = "PGPASSWORD=hunter2 psql --host=127.0.0.1 --port=5555 --username=postgres pggen"
+
+# --- Build, test, lint ---
+
+[tasks.build]
+description = "Build all packages"
+run = "go build ./..."
+
+# Some packages (internal/pg, internal/pgplan, internal/pginfer, and the example
+# tests) talk to the Postgres from docker-compose.yml on port 5555, so `start`
+# has to have run first.
+[tasks.test]
+description = "Run the unit tests (requires `mise run start`)"
+depends = ["start"]
+run = "go test ./..."
+
+# Spins up its own throwaway Postgres via pgdocker, so it does not need `start`.
+# It asserts the working tree is clean afterwards, so commit before running it.
+[tasks.acceptance-test]
+description = "Regenerate every example against a throwaway Postgres and assert no git diff"
+run = "go test --tags=acceptance_test ./..."
+
+[tasks.update-acceptance-test]
+description = "Rewrite the committed example output from the current generator"
+run = "go test --tags=acceptance_test ./example/ -update"
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.all]
+description = "Lint, test, and run the acceptance suite"
+run = ["mise run lint", "mise run test", "mise run acceptance-test"]
+
+[tasks.release]
+description = "Build and publish a release"
+run = "./script/release.sh"
