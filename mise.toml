@@ -69,3 +69,7 @@ run = "golangci-lint run"
 [tasks.all]
 description = "Lint, test, and run the acceptance suite"
 run = ["mise run lint", "mise run test", "mise run acceptance-test"]
+
+[tasks.release]
+description = "Build and publish a release"
+run = "./script/release.sh"

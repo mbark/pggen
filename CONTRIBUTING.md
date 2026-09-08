@@ -9,22 +9,24 @@ First, read [ARCHITECTURE.md](ARCHITECTURE.md) to get a lay of the land.
 ```shell
 # Dependencies - see Setup below
 
+# Install the pinned Go and golangci-lint.
+mise install
+
 # Start a long-lived Postgres server in Docker for integration tests.
-# Connect with "make psql"
-make start 
+# Connect with "mise run psql"
+mise run start
 
 # Hack
 # Commit changes
 
 # Validate changes
-make lint && make test && make acceptance-test 
-# make all - equivalent
-# make     - equivalent
+mise run all
+# mise run lint && mise run test && mise run acceptance-test - equivalent
 
 # Send PR to GitHub. Check that tests and lints passed.
 
 # Stop Postgres server running in Docker.
-make stop
+mise run stop
 ```
 
 ## Design goals of pggen
@@ -44,24 +46,26 @@ make stop
 
 ## Setup
 
-You need to install 1 dependency:
+You need [mise] and Docker. Everything else is pinned in `mise.toml` and
+installed by:
 
--   [golangci-lint] to lint the project locally.
+```shell
+mise install
+```
 
-    For macOS:
-    
-    ```shell
-    brew install golangci-lint
-    ```
-    
-    For Windows and Linux:
+That gives you the same Go and [golangci-lint] versions CI uses. Run
+`mise tasks` to list the available tasks.
 
-    ```shell
-    # binary will be $(go env GOPATH)/bin/golangci-lint
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.36.0
-    golangci-lint --version
-    ````
+If your Docker daemon is not at `/var/run/docker.sock` — Docker Desktop on
+macOS puts it under `$HOME/.docker/run` — point the acceptance tests at it
+from a `mise.local.toml`, which is gitignored:
 
+```toml
+[env]
+DOCKER_HOST = "unix://{{ env.HOME }}/.docker/run/docker.sock"
+```
+
+[mise]: https://mise.jdx.dev/
 [golangci-lint]: https://golangci-lint.run/
 
 ## Testing
@@ -72,8 +76,7 @@ tests from one another. Creating a new schema is much faster than spinning up a
 new Dockerized Postgres instance.
 
 ```shell
-make start
-make test # all unit tests
+mise run test # all unit tests; starts Postgres first
 ```
 
 To run the acceptance tests to validate that pggen produces the same code as 
@@ -81,15 +84,16 @@ the checked-in example code:
 
 ```shell
 # Acceptance tests check that there's no Git diffs so commit code first.
+# This includes go.mod and go.sum, not just generated output.
 git commit -m "some message" 
 
-make acceptance-test
+mise run acceptance-test
 ```
 
 To update the acceptance tests after changing the code generator:
 
 ```shell
-make update-acceptance-test
+mise run update-acceptance-test
 ```
 
 ### Testing hierarchy
@@ -97,15 +101,15 @@ make update-acceptance-test
 pggen has tests at most parts of the testing hierarchy.
 
 -   Unit tests to test the logic of small, independent components, like 
-    [casing_test.go]. Run with `make test`.
+    [casing_test.go]. Run with `mise run test`.
     
 -   Integration tests like the [pginfer_test.go] to test that the code works
     (integrates) with different subsystems like Postgres, Docker, or other Go
-    packages. As with unit tests, run with `make test`.
+    packages. As with unit tests, run with `mise run test`.
     
 -   Acceptance tests like [example/nested/codegen_test.go] to test that pggen
     produces the exact same output as the checked-in examples. Run with 
-    `make acceptance-test`.
+    `mise run acceptance-test`.
     
 [casing_test.go]: internal/casing/casing_test.go
 [pginfer_test.go]: internal/pginfer/pginfer_test.go
