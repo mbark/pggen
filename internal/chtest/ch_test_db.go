@@ -13,7 +13,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,10 +20,8 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/mbark/pggen/internal/ch"
+	"github.com/mbark/pggen/internal/errs"
 )
-
-// CleanupFunc drops the database and closes the connections.
-type CleanupFunc func()
 
 // Addr is the local ClickHouse from docker-compose.yml. The native port is
 // 9010 rather than 9000 so it can coexist with another project's ClickHouse.
@@ -53,38 +50,23 @@ func DSN(database string) string {
 // and runs the statements in sql against it. Statements are separated by
 // semicolons: ClickHouse has no multi-statement Exec. It also returns the DSN
 // for that database, for tests that drive pggen through its public API.
-func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string, CleanupFunc) {
+func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// The ClickHouse behind these tests is the long-lived one from
 	// docker-compose, so anything this function creates and then abandons
-	// stays there until someone drops it by hand. Each resource is registered
-	// for release as soon as it exists, and the whole stack runs on t.Cleanup
-	// as well, because a t.Fatalf below never reaches the caller's defer.
-	var release []func(context.Context)
-	var once sync.Once
-	cleanup := func() {
-		once.Do(func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			for i := len(release) - 1; i >= 0; i-- {
-				release[i](ctx)
-			}
-		})
-	}
-	t.Cleanup(cleanup)
-
+	// stays there until someone drops it by hand. Each resource is handed to
+	// t.Cleanup as soon as it exists, which releases it in reverse order and
+	// runs even for the t.Fatalf calls below.
 	admin, err := clickhouse.Open(Options("default"))
 	if err != nil {
 		t.Fatalf("connect to docker clickhouse: %s", err)
 	}
-	release = append(release, func(context.Context) {
-		if err := admin.Close(); err != nil {
-			t.Errorf("close admin conn: %s", err)
-		}
-	})
+	// Registered first so it runs last: t.Cleanup is LIFO, and dropping the
+	// database below needs this connection.
+	t.Cleanup(func() { errs.CaptureT(t, admin.Close, "close admin conn") })
 	if err := admin.Ping(ctx); err != nil {
 		t.Fatalf("ping docker clickhouse at %s: %s", Addr, err)
 	}
@@ -94,33 +76,31 @@ func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string, Clean
 		t.Fatalf("create new database: %s", err)
 	}
 	t.Logf("created database: %s", database)
-	release = append(release, func(ctx context.Context) {
-		if err := admin.Exec(ctx, "DROP DATABASE "+database); err != nil {
-			t.Errorf("drop database %s: %s", database, err)
-		}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		errs.CaptureT(t, func() error {
+			return admin.Exec(ctx, "DROP DATABASE "+database)
+		}, "drop database "+database)
 	})
 
 	conn, err := clickhouse.Open(Options(database))
 	if err != nil {
 		t.Fatalf("connect to new database %s: %s", database, err)
 	}
-	release = append(release, func(context.Context) {
-		if err := conn.Close(); err != nil {
-			t.Errorf("close database conn: %s", err)
-		}
-	})
+	t.Cleanup(func() { errs.CaptureT(t, conn.Close, "close database conn") })
 	for _, stmt := range ch.SplitStatements(sql) {
 		if err := conn.Exec(ctx, stmt); err != nil {
 			t.Fatalf("run sql %q: %s", truncate(stmt), err)
 		}
 	}
 
-	return conn, DSN(database), cleanup
+	return conn, DSN(database)
 }
 
 // NewClickHouseDB opens a connection to a randomly named, new database and
 // runs all sqlFiles against it.
-func NewClickHouseDB(t *testing.T, sqlFiles []string) (driver.Conn, string, CleanupFunc) {
+func NewClickHouseDB(t *testing.T, sqlFiles []string) (driver.Conn, string) {
 	t.Helper()
 	sb := &strings.Builder{}
 	for _, file := range sqlFiles {

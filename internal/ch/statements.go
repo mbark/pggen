@@ -1,6 +1,9 @@
 package ch
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // skipLiteral returns the index just past the string literal or quoted
 // identifier starting at i, or i if none starts there.
@@ -87,4 +90,27 @@ func SplitStatements(sql string) []string {
 	}
 	flush()
 	return stmts
+}
+
+// SingleStatement returns sql as one statement, with comments and the
+// statement terminator removed.
+//
+// It exists because inference does not send the query as written: it splices
+// it into DESCRIBE (...) or after EXPLAIN AST, where a trailing semicolon is a
+// syntax error and a trailing -- comment swallows whatever follows it. Rather
+// than have each wrapper defend itself, they all get a statement that has
+// neither.
+func SingleStatement(sql string) (string, error) {
+	stmts := SplitStatements(sql)
+	switch len(stmts) {
+	case 1:
+		return stmts[0], nil
+	case 0:
+		return "", fmt.Errorf("the query is empty")
+	default:
+		return "", fmt.Errorf(
+			"the query has %d statements separated by semicolons; "+
+				"pggen generates one method per query, so write them as separate queries",
+			len(stmts))
+	}
 }

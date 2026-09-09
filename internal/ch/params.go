@@ -24,13 +24,12 @@ func scanSQL(sql string, onText func(string), onParam func(Param) error) error {
 		}
 	}
 	for i := 0; i < len(sql); {
-		// Literals and comments are skipped whole so that a brace inside one
-		// is not mistaken for a parameter. SplitStatements walks the same way.
-		if next := skipLiteral(sql, i); next != i {
+		// SplitStatements walks the same way.
+		if next := skipComment(sql, i); next != i {
 			i = next
 			continue
 		}
-		if next := skipComment(sql, i); next != i {
+		if next := skipLiteral(sql, i); next != i {
 			i = next
 			continue
 		}

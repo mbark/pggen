@@ -11,8 +11,7 @@ import (
 )
 
 func TestQuerier(t *testing.T) {
-	conn, _, cleanup := chtest.NewClickHouseDB(t, []string{"schema.sql"})
-	defer cleanup()
+	conn, _ := chtest.NewClickHouseDB(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	ctx := context.Background()
 

@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -125,29 +124,38 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 // and `offset` are both settings — poisons the request. Sending a renamed copy
 // of the query sidesteps the whole namespace; the answer is the same either
 // way, since the server reads the parameters' types and not their names.
-func (inf *Inferrer) prepare(
-	ctx context.Context, sql string, params []ch.Param,
-) (context.Context, string, []any, error) {
+func (inf *Inferrer) prepare(sql string, params []ch.Param) (string, []any, error) {
 	args := make([]any, 0, len(params))
 	names := make(map[string]string, len(params))
 	for i, p := range params {
 		lit, err := ch.ZeroLiteral(p.Type)
 		if err != nil {
-			return ctx, "", nil, err
+			return "", nil, err
 		}
 		names[p.Name] = fmt.Sprintf("%s%d", describeParamPrefix, i)
 		args = append(args, clickhouse.Named(names[p.Name], lit))
 	}
 	sql, err := ch.RenameParams(sql, func(name string) string { return names[name] })
 	if err != nil {
-		return ctx, "", nil, err
+		return "", nil, err
 	}
-	if len(inf.settings) > 0 {
-		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(inf.settings))
+	// Both callers splice the query into a larger statement, so it arrives
+	// here with whatever the query file ended in.
+	sql, err = ch.SingleStatement(sql)
+	if err != nil {
+		return "", nil, err
 	}
-	// A trailing semicolon is a syntax error once the query is wrapped in
-	// DESCRIBE (...) or prefixed with EXPLAIN AST.
-	return ctx, strings.TrimRight(sql, "; \t\r\n"), args, nil
+	return sql, args, nil
+}
+
+// queryCtx carries the settings the application connects with. Inference is
+// only correct under them: with join_use_nulls off, for one, a LEFT JOIN does
+// not make the right side Nullable.
+func (inf *Inferrer) queryCtx(ctx context.Context) context.Context {
+	if len(inf.settings) == 0 {
+		return ctx
+	}
+	return clickhouse.Context(ctx, clickhouse.WithSettings(inf.settings))
 }
 
 // checkSyntax asks the server to parse the query without running it.
@@ -157,11 +165,11 @@ func (inf *Inferrer) prepare(
 // column that does not exist. For a query that returns rows, describe does the
 // full semantic check; this is the fallback for the ones that do not.
 func (inf *Inferrer) checkSyntax(ctx context.Context, sql string, params []ch.Param) error {
-	ctx, sql, args, err := inf.prepare(ctx, sql, params)
+	sql, args, err := inf.prepare(sql, params)
 	if err != nil {
 		return err
 	}
-	rows, err := inf.conn.Query(ctx, "EXPLAIN AST "+sql, args...)
+	rows, err := inf.conn.Query(inf.queryCtx(ctx), "EXPLAIN AST "+sql, args...)
 	if err != nil {
 		return describeError(err)
 	}
@@ -175,15 +183,12 @@ func (inf *Inferrer) checkSyntax(ctx context.Context, sql string, params []ch.Pa
 // describe runs DESCRIBE on the query and reads the result column names and
 // types back out.
 func (inf *Inferrer) describe(ctx context.Context, sql string, params []ch.Param) ([]codegen.OutputColumn, error) {
-	ctx, sql, args, err := inf.prepare(ctx, sql, params)
+	sql, args, err := inf.prepare(sql, params)
 	if err != nil {
 		return nil, err
 	}
 
-	// DESCRIBE wraps the query in parentheses. The closing paren goes on its
-	// own line because a query can end in a -- comment, which would otherwise
-	// swallow it.
-	rows, err := inf.conn.Query(ctx, "DESCRIBE (\n"+sql+"\n)", args...)
+	rows, err := inf.conn.Query(inf.queryCtx(ctx), "DESCRIBE ("+sql+")", args...)
 	if err != nil {
 		return nil, describeError(err)
 	}

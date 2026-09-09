@@ -155,8 +155,8 @@ func TestQualifyType(t *testing.T) {
 			want:     "[][]qux.Bar",
 		},
 		{
-			// An unqualified otherPkg matching the type's package means the
-			// same package, so the name loses its qualifier but keeps its [].
+			// The element's package matching otherPkg means the same package,
+			// so the name loses its qualifier but keeps its [].
 			name:     "[]foo.Bar - foo",
 			typ:      &ArrayType{Elem: &ImportType{PkgPath: "foo", Type: &OpaqueType{Name: "Bar"}}},
 			otherPkg: "foo",

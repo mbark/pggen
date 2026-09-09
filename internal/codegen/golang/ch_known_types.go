@@ -32,9 +32,10 @@ var (
 	chDecimal = gotype.MustParseKnownType("github.com/shopspring/decimal.Decimal")
 	chTime    = gotype.MustParseKnownType("time.Time")
 	chUUID    = gotype.MustParseKnownType("github.com/google/uuid.UUID")
-	// ClickHouse hands IP columns back as netip.Addr.
-	chIPv4 = gotype.MustParseKnownType("net/netip.Addr")
-	chIPv6 = gotype.MustParseKnownType("net/netip.Addr")
+	// ClickHouse hands IP columns back as netip.Addr, both families alike.
+	chNetipAddr = gotype.MustParseKnownType("net/netip.Addr")
+	// No Go builtin is wide enough for the 128- and 256-bit integers.
+	chBigInt = gotype.MustParseKnownType("*math/big.Int")
 )
 
 // chScalarTypes maps the parameterless ClickHouse types to Go.
@@ -56,12 +57,10 @@ var chScalarTypes = map[string]gotype.Type{
 	"Float32": gotype.MustParseKnownType("float32"),
 	"Float64": gotype.MustParseKnownType("float64"),
 
-	// The 128- and 256-bit integers arrive as big.Int; there is no Go builtin
-	// wide enough.
-	"Int128":  gotype.MustParseKnownType("*math/big.Int"),
-	"Int256":  gotype.MustParseKnownType("*math/big.Int"),
-	"UInt128": gotype.MustParseKnownType("*math/big.Int"),
-	"UInt256": gotype.MustParseKnownType("*math/big.Int"),
+	"Int128":  chBigInt,
+	"Int256":  chBigInt,
+	"UInt128": chBigInt,
+	"UInt256": chBigInt,
 
 	"Date":       chTime,
 	"Date32":     chTime,
@@ -69,6 +68,6 @@ var chScalarTypes = map[string]gotype.Type{
 	"DateTime64": chTime,
 
 	"UUID": chUUID,
-	"IPv4": chIPv4,
-	"IPv6": chIPv6,
+	"IPv4": chNetipAddr,
+	"IPv6": chNetipAddr,
 }

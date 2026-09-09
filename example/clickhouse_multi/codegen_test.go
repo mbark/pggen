@@ -12,8 +12,7 @@ import (
 )
 
 func TestGenerate_Go_Example_ClickHouseMulti(t *testing.T) {
-	_, dsn, cleanupFunc := chtest.NewClickHouseDB(t, []string{"schema.sql"})
-	defer cleanupFunc()
+	_, dsn := chtest.NewClickHouseDB(t, []string{"schema.sql"})
 
 	tmpDir := t.TempDir()
 	err := pggen.Generate(

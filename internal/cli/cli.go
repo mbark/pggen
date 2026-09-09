@@ -11,10 +11,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/mbark/pggen"
 	"github.com/mbark/pggen/internal/flags"
 	"github.com/mbark/pggen/internal/paths"
 	"github.com/peterbourgon/ff/v3/ffcli"
@@ -26,7 +28,6 @@ import (
 type Labels struct {
 	Cmd        string // "pggen" or "chgen"
 	DB         string // "Postgres" or "ClickHouse"
-	TypeName   string // "<pgType>" or "<chType>", used in --go-type errors
 	SchemaHelp string // help for --schema-glob
 	GoTypeHelp string // help for --go-type
 }
@@ -61,51 +62,60 @@ func RegisterGenFlags(fset *flag.FlagSet, labels Labels) *GenFlags {
 	}
 }
 
-// Gen is the resolved form of the shared flags, ready to hand to
-// pggen.Generate.
-type Gen struct {
-	QueryFiles       []string
-	SchemaFiles      []string
-	OutputDir        string
-	Acronyms         map[string]string
-	TypeOverrides    map[string]string
-	InlineParamCount int
-}
-
-// Resolve expands the globs and parses the flags whose values carry their own
-// little formats.
-func (f *GenFlags) Resolve() (Gen, error) {
+// GenerateGo resolves the flags and generates Go code for the queries they
+// name, reporting how many files came out.
+//
+// The whole body lives here rather than in each binary's Exec because the two
+// differ only in the dialect and where the connection string comes from —
+// leaving them to build the GenerateOptions themselves is how a newly added
+// option gets wired into one binary and not the other.
+func (f *GenFlags) GenerateGo(dialect pggen.Dialect, connString string) error {
 	if len(*f.queryGlobs) == 0 {
-		return Gen{}, fmt.Errorf("%s gen go: at least one file in --query-glob must match", f.labels.Cmd)
+		return fmt.Errorf("%s gen go: at least one file in --query-glob must match", f.labels.Cmd)
 	}
 	queries, err := paths.ExpandSortGlobs(*f.queryGlobs)
 	if err != nil {
-		return Gen{}, err
+		return err
 	}
 	schemas, err := paths.ExpandSortGlobs(*f.schemaGlobs)
 	if err != nil {
-		return Gen{}, err
+		return err
 	}
 	outDir, err := DeduceOutputDir(*f.outputDir, queries)
 	if err != nil {
-		return Gen{}, err
+		return err
 	}
 	acronyms, err := ParseAcronyms(*f.acronyms)
 	if err != nil {
-		return Gen{}, err
+		return err
 	}
-	typeOverrides, err := ParseGoTypes(f.labels.TypeName, *f.goTypes)
+	typeOverrides, err := ParseGoTypes(*f.goTypes)
 	if err != nil {
-		return Gen{}, err
+		return err
 	}
-	return Gen{
-		QueryFiles:       queries,
+
+	err = pggen.Generate(pggen.GenerateOptions{
+		Language:         pggen.LangGo,
+		Dialect:          dialect,
+		ConnString:       connString,
 		SchemaFiles:      schemas,
+		QueryFiles:       queries,
 		OutputDir:        outDir,
 		Acronyms:         acronyms,
 		TypeOverrides:    typeOverrides,
+		LogLevel:         slog.LevelInfo,
 		InlineParamCount: *f.inlineParamCount,
-	}, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	fileDesc := "files"
+	if len(queries) == 1 {
+		fileDesc = "file"
+	}
+	fmt.Printf("generated %d query %s\n", len(queries), fileDesc)
+	return nil
 }
 
 // DeduceOutputDir returns outputDir if set, and otherwise the directory the
@@ -156,28 +166,17 @@ func ParseAcronyms(acronyms []string) (map[string]string, error) {
 // spells its labels in the type, as Enum8('MOC' = 1, 'GPRS' = 7), and that is
 // exactly the type most worth overriding. A Go type reference cannot contain
 // "=", so the last one is always the separator.
-//
-// typeName names the left-hand side in the error message, like "<pgType>".
-func ParseGoTypes(typeName string, goTypes []string) (map[string]string, error) {
+func ParseGoTypes(goTypes []string) (map[string]string, error) {
 	overrides := make(map[string]string, len(goTypes))
 	for _, typeAssoc := range goTypes {
 		i := strings.LastIndex(typeAssoc, "=")
 		if i <= 0 || i == len(typeAssoc)-1 {
 			return nil, fmt.Errorf(
-				"--go-type must have format %s=<goType>; got %q", typeName, typeAssoc)
+				"--go-type must have format <dbType>=<goType>; got %q", typeAssoc)
 		}
 		overrides[typeAssoc[:i]] = typeAssoc[i+1:]
 	}
 	return overrides, nil
-}
-
-// ReportGenerated prints the count of generated query files.
-func ReportGenerated(n int) {
-	fileDesc := "files"
-	if n == 1 {
-		fileDesc = "file"
-	}
-	fmt.Printf("generated %d query %s\n", n, fileDesc)
 }
 
 // RootCmd builds the top-level command, which only prints usage.
@@ -193,12 +192,12 @@ func RootCmd(labels Labels, longHelp string, subcommands ...*ffcli.Command) *ffc
 }
 
 // GenCmd builds the "gen" command, which only dispatches to a language.
-func GenCmd(labels Labels, langCmds ...*ffcli.Command) *ffcli.Command {
+func GenCmd(labels Labels, goSubCmd *ffcli.Command) *ffcli.Command {
 	cmd := &ffcli.Command{
 		Name:        "gen",
 		ShortUsage:  labels.Cmd + " gen (go|<lang>) [options...]",
 		ShortHelp:   "generates code in specific language for " + labels.DB + " query files",
-		Subcommands: langCmds,
+		Subcommands: []*ffcli.Command{goSubCmd},
 	}
 	cmd.Exec = usageExec(cmd)
 	return cmd

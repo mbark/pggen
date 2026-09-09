@@ -81,7 +81,7 @@ type (
 	VoidType struct{}
 )
 
-func (a *ArrayType) Import() string   { return a.Elem.Import() }
+func (a *ArrayType) Import() string   { return "" }
 func (a *ArrayType) BaseName() string { return "[]" + a.Elem.BaseName() }
 
 func (m *MapType) Import() string { return "" }
@@ -107,28 +107,6 @@ func (o *PointerType) BaseName() string { return "*" + o.Elem.BaseName() }
 func (e *VoidType) Import() string   { return "" }
 func (e *VoidType) BaseName() string { return "" }
 
-// getTypePackage returns the package a leaf type comes from.
-//
-// Only leaves have one. An array, a pointer, or a map is qualified part by
-// part — the parts can come from different packages — so QualifyType peels
-// those before it gets here.
-func getTypePackage(typ Type) string {
-	switch typ := typ.(type) {
-	case *CompositeType:
-		return ""
-	case *EnumType:
-		return ""
-	case *ImportType:
-		return typ.PkgPath
-	case *OpaqueType:
-		return ""
-	case *VoidType:
-		return ""
-	default:
-		panic(fmt.Sprintf("unhandled getTypePackage type %T", typ))
-	}
-}
-
 // QualifyType returns the Go qualified type string for typ, relative to
 // otherPkgPath. If aliases is non-nil, it maps full package paths to import
 // aliases for resolving name collisions.
@@ -146,32 +124,20 @@ func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) st
 		return "*" + QualifyType(t.Elem, otherPkgPath, aliases...)
 	}
 
-	sb := &strings.Builder{}
-	pkg := getTypePackage(typ)
-	if typ.Import() == otherPkgPath || typ.Import() == "" || pkg == "" {
-		sb.WriteString(typ.BaseName())
-		return sb.String()
+	name := typ.BaseName()
+	pkg := typ.Import()
+	if pkg == "" || pkg == otherPkgPath {
+		return name
 	}
-	if !strings.ContainsRune(otherPkgPath, '.') && pkg == otherPkgPath {
-		// If the otherPkgPath is unqualified and matches the package path, assume
-		// the same package.
-		return typ.BaseName()
+	// Check for an import alias first.
+	shortPkg := ""
+	if len(aliases) > 0 && aliases[0] != nil {
+		shortPkg = aliases[0][pkg]
 	}
-	sb.Grow(len(typ.BaseName()))
-	if typ.Import() != "" {
-		// Check for an import alias first.
-		shortPkg := ""
-		if len(aliases) > 0 && aliases[0] != nil {
-			shortPkg = aliases[0][pkg]
-		}
-		if shortPkg == "" {
-			shortPkg = ExtractShortPackage([]byte(pkg))
-		}
-		sb.WriteString(shortPkg)
-		sb.WriteRune('.')
+	if shortPkg == "" {
+		shortPkg = ExtractShortPackage([]byte(pkg))
 	}
-	sb.WriteString(typ.BaseName())
-	return sb.String()
+	return shortPkg + "." + name
 }
 
 func NewArrayType(sqlName string, elemType Type) Type {
@@ -282,11 +248,7 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 // that pgx supports natively like "github.com/jackc/pgtype.Int4Array", or most
 // builtin types like "string" and []*int16.
 func MustParseKnownType(qualType string) Type {
-	typ, err := ParseOpaqueType(qualType, nil)
-	if err != nil {
-		panic(err.Error())
-	}
-	return typ
+	return mustParseOpaqueType(qualType, nil)
 }
 
 // MustParseKnownArrayType creates a gotype.Type for a Go slice backed by a
@@ -297,6 +259,13 @@ func MustParseKnownType(qualType string) Type {
 // sqltype.Type makes "this Go slice needs a database array" a compile-time
 // requirement instead of a run-time check.
 func MustParseKnownArrayType(qualType string, sqlType sqltype.ArrayType) Type {
+	return mustParseOpaqueType(qualType, sqlType)
+}
+
+// mustParseOpaqueType panics on a malformed type. The known-type tables are
+// package-level variables, so there is nowhere to return an error to and no
+// input but the literals in this repo.
+func mustParseOpaqueType(qualType string, sqlType sqltype.Type) Type {
 	typ, err := ParseOpaqueType(qualType, sqlType)
 	if err != nil {
 		panic(err.Error())

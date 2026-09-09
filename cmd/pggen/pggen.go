@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"log/slog"
 
 	"github.com/mbark/pggen"
 	"github.com/mbark/pggen/internal/cli"
@@ -37,9 +36,8 @@ EXAMPLES
 `
 
 var labels = cli.Labels{
-	Cmd:      "pggen",
-	DB:       "Postgres",
-	TypeName: "<pgType>",
+	Cmd: "pggen",
+	DB:  "Postgres",
 	SchemaHelp: "create schema in Postgres from all sql, sql.gz, or shell " +
 		"scripts (*.sh) that match a glob, like 'migrations/*.sql'",
 	GoTypeHelp: "custom type mapping from Postgres to fully qualified Go type, " +
@@ -63,27 +61,7 @@ func newGenCmd() *ffcli.Command {
 			present, pggen creates a Docker container to query the database.
 		`),
 		Exec: func(ctx context.Context, args []string) error {
-			gen, err := genFlags.Resolve()
-			if err != nil {
-				return err
-			}
-			err = pggen.Generate(pggen.GenerateOptions{
-				Language:         pggen.LangGo,
-				Dialect:          pggen.DialectPostgres,
-				ConnString:       *postgresConn,
-				SchemaFiles:      gen.SchemaFiles,
-				QueryFiles:       gen.QueryFiles,
-				OutputDir:        gen.OutputDir,
-				Acronyms:         gen.Acronyms,
-				TypeOverrides:    gen.TypeOverrides,
-				LogLevel:         slog.LevelInfo,
-				InlineParamCount: gen.InlineParamCount,
-			})
-			if err != nil {
-				return err
-			}
-			cli.ReportGenerated(len(gen.QueryFiles))
-			return nil
+			return genFlags.GenerateGo(pggen.DialectPostgres, *postgresConn)
 		},
 	}
 	return cli.GenCmd(labels, goSubCmd)

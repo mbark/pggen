@@ -265,25 +265,14 @@ func TestExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Stopping the container gets a context of its own: the one that started
-	// it may well have expired by the time the last subtest is done, and a
-	// container that is never stopped outlives the test run.
-	defer errs.CaptureT(t, func() error {
-		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return docker.Stop(stopCtx)
-	}, "stop docker")
+	defer errs.CaptureT(t, withTimeout(30*time.Second, docker.Stop), "stop docker")
 	mainConnStr, err := docker.ConnString()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log("started dockerized postgres: " + mainConnStr)
 	conn, err := pgx.Connect(startCtx, mainConnStr)
-	defer errs.CaptureT(t, func() error {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		return conn.Close(closeCtx)
-	}, "close conn")
+	defer errs.CaptureT(t, withTimeout(30*time.Second, conn.Close), "close conn")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,14 +376,7 @@ func TestClickHouseExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Stopping the container gets a context of its own: the one that started
-	// it may well have expired by the time the last subtest is done, and a
-	// container that is never stopped outlives the test run.
-	defer errs.CaptureT(t, func() error {
-		stopCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		return docker.Stop(stopCtx)
-	}, "stop docker")
+	defer errs.CaptureT(t, withTimeout(time.Minute, docker.Stop), "stop docker")
 	mainConnStr := docker.ConnString()
 	t.Log("started dockerized clickhouse: " + mainConnStr)
 
@@ -417,11 +399,9 @@ func TestClickHouseExamples(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				if err := conn.Exec(dropCtx, `DROP DATABASE `+dbName); err != nil {
-					t.Errorf("drop database %s: %s", dbName, err)
-				}
+				errs.CaptureT(t, withTimeout(30*time.Second, func(ctx context.Context) error {
+					return conn.Exec(ctx, `DROP DATABASE `+dbName)
+				}), "drop database "+dbName)
 			})
 			dbOpts := *opts
 			dbOpts.Auth.Database = dbName
@@ -433,6 +413,20 @@ func TestClickHouseExamples(t *testing.T) {
 				assertNoGitDiff(t)
 			}
 		})
+	}
+}
+
+// withTimeout adapts a context-taking call into the no-argument form
+// errs.CaptureT and t.Cleanup want, giving it a context of its own.
+//
+// Cleanup cannot borrow the context that set the resource up: that one may
+// well have expired by the time the last subtest is done, and a container
+// that is never stopped outlives the test run.
+func withTimeout(d time.Duration, fn func(context.Context) error) func() error {
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		return fn(ctx)
 	}
 }
 

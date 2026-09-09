@@ -1,6 +1,7 @@
 package ch
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -72,6 +73,59 @@ func TestSplitStatements(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if diff := cmp.Diff(tt.want, SplitStatements(tt.sql)); diff != "" {
 				t.Errorf("SplitStatements mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestSingleStatement matters because inference splices the query into a
+// larger statement, where a leftover semicolon or a trailing comment breaks
+// the wrapping rather than the query.
+func TestSingleStatement(t *testing.T) {
+	tests := []struct {
+		name, sql, want string
+	}{
+		{name: "plain", sql: "SELECT 1", want: "SELECT 1"},
+		{name: "trailing_semicolon", sql: "SELECT 1;\n", want: "SELECT 1"},
+		{
+			name: "trailing_line_comment",
+			sql:  "SELECT a FROM t -- only a\n",
+			want: "SELECT a FROM t",
+		},
+		{
+			// TrimRight cannot reach the semicolon here: the trailing run is
+			// the comment, not the terminator.
+			name: "semicolon_then_comment",
+			sql:  "SELECT 1; -- a note",
+			want: "SELECT 1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SingleStatement(tt.sql)
+			if err != nil {
+				t.Fatalf("SingleStatement(%q) returned error: %s", tt.sql, err)
+			}
+			if got != tt.want {
+				t.Errorf("SingleStatement(%q) = %q; want %q", tt.sql, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSingleStatement_errors(t *testing.T) {
+	tests := []struct{ name, sql, wantSub string }{
+		{name: "empty", sql: "  \n-- nothing here\n", wantSub: "empty"},
+		{name: "two_statements", sql: "SELECT 1; SELECT 2", wantSub: "2 statements"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SingleStatement(tt.sql)
+			if err == nil {
+				t.Fatalf("SingleStatement(%q) should have returned an error", tt.sql)
+			}
+			if !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("error %q should mention %q", err, tt.wantSub)
 			}
 		})
 	}

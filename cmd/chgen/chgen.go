@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"flag"
-	"log/slog"
 
 	"github.com/mbark/pggen"
 	"github.com/mbark/pggen/internal/cli"
@@ -54,9 +53,8 @@ EXAMPLES
 `
 
 var labels = cli.Labels{
-	Cmd:      "chgen",
-	DB:       "ClickHouse",
-	TypeName: "<chType>",
+	Cmd: "chgen",
+	DB:  "ClickHouse",
 	SchemaHelp: "create schema in ClickHouse from all sql files that match a glob, " +
 		"like 'migrations/*.sql'",
 	GoTypeHelp: "custom type mapping from ClickHouse to fully qualified Go type, " +
@@ -80,27 +78,7 @@ func newGenCmd() *ffcli.Command {
 			present, chgen creates a Docker container to query the database.
 		`),
 		Exec: func(ctx context.Context, args []string) error {
-			gen, err := genFlags.Resolve()
-			if err != nil {
-				return err
-			}
-			err = pggen.Generate(pggen.GenerateOptions{
-				Language:         pggen.LangGo,
-				Dialect:          pggen.DialectClickHouse,
-				ConnString:       *clickhouseConn,
-				SchemaFiles:      gen.SchemaFiles,
-				QueryFiles:       gen.QueryFiles,
-				OutputDir:        gen.OutputDir,
-				Acronyms:         gen.Acronyms,
-				TypeOverrides:    gen.TypeOverrides,
-				LogLevel:         slog.LevelInfo,
-				InlineParamCount: gen.InlineParamCount,
-			})
-			if err != nil {
-				return err
-			}
-			cli.ReportGenerated(len(gen.QueryFiles))
-			return nil
+			return genFlags.GenerateGo(pggen.DialectClickHouse, *clickhouseConn)
 		},
 	}
 	return cli.GenCmd(labels, goSubCmd)

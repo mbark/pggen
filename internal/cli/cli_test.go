@@ -53,7 +53,7 @@ func TestParseGoTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseGoTypes("<chType>", tt.flags)
+			got, err := ParseGoTypes(tt.flags)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -63,7 +63,7 @@ func TestParseGoTypes(t *testing.T) {
 func TestParseGoTypes_errors(t *testing.T) {
 	for _, flag := range []string{"String", "=example.com/brand.Name", "String=", ""} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := ParseGoTypes("<chType>", []string{flag})
+			_, err := ParseGoTypes([]string{flag})
 			assert.ErrorContains(t, err, "--go-type must have format")
 		})
 	}

@@ -64,7 +64,7 @@ type Client struct {
 
 // Start builds an image from cfg and runs it, returning once the database is
 // ready.
-func Start(ctx context.Context, cfg Config) (client *Client, mErr error) {
+func Start(ctx context.Context, cfg Config) (_ *Client, mErr error) {
 	now := time.Now()
 	dockerCl, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv)
 	if err != nil {
@@ -86,10 +86,6 @@ func Start(ctx context.Context, cfg Config) (client *Client, mErr error) {
 	// Clean up the container if we fail after starting it. Registered before
 	// the log capture so it runs after it — stopping the container also
 	// removes it, and its logs with it.
-	//
-	// The guard is on mErr alone. Guarding on the returned client as well
-	// would make this dead code: every failing path returns a nil client, and
-	// the successful one leaves mErr nil.
 	defer func() {
 		if mErr == nil {
 			return
