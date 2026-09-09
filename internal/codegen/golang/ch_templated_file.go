@@ -140,6 +140,65 @@ func chTag(pgName string) string {
 	return "ch:" + strconv.Quote(pgName)
 }
 
+// chConnMethods reports which genericConn methods a package's queries call.
+type chConnMethods struct{ Select, Query, QueryRow, Exec bool }
+
+// needsDriverPkg reports whether the interface names a type from
+// clickhouse-go's driver package. Only Query and QueryRow do.
+func (m chConnMethods) needsDriverPkg() bool { return m.Query || m.QueryRow }
+
+// chConnMethodsOf reports the methods the queries in files call.
+func chConnMethodsOf(files []TemplatedFile) chConnMethods {
+	var m chConnMethods
+	for _, file := range files {
+		for _, q := range file.Queries {
+			switch {
+			case q.ResultKind == ast.ResultKindExec:
+				m.Exec = true
+			case q.ResultKind == ast.ResultKindOne:
+				m.QueryRow = true
+			case q.EmitChUsesRowStruct():
+				m.Select = true
+			default:
+				// A :many over a single column cannot use struct scanning.
+				m.Query = true
+			}
+		}
+	}
+	return m
+}
+
+// EmitChGenericConn emits the genericConn interface with only the methods the
+// package's queries call.
+//
+// A package of read-only queries should not demand a connection that can Exec,
+// so a caller can pass a narrower interface of its own — which is what makes a
+// wrapper like a concurrency limiter or a tracer usable here.
+func (tf TemplatedFile) EmitChGenericConn() string {
+	m := chConnMethodsOf(tf.Pkg.Files)
+
+	sb := &strings.Builder{}
+	sb.WriteString("// genericConn is a connection to ClickHouse, like clickhouse.Conn or a\n")
+	sb.WriteString("// decorator that wraps one.\n")
+	sb.WriteString("type genericConn interface {\n")
+	if m.Select {
+		sb.WriteString("\t// Select runs the query and scans every row into dest, a pointer to a\n")
+		sb.WriteString("\t// slice of structs.\n")
+		sb.WriteString("\tSelect(ctx context.Context, dest any, query string, args ...any) error\n")
+	}
+	if m.Query {
+		sb.WriteString("\tQuery(ctx context.Context, query string, args ...any) (driver.Rows, error)\n")
+	}
+	if m.QueryRow {
+		sb.WriteString("\tQueryRow(ctx context.Context, query string, args ...any) driver.Row\n")
+	}
+	if m.Exec {
+		sb.WriteString("\tExec(ctx context.Context, query string, args ...any) error\n")
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
 // needsClickHouseImport reports whether a file references the clickhouse
 // package, which it does only to name parameters with clickhouse.Named.
 func (tf TemplatedFile) needsClickHouseImport() bool {

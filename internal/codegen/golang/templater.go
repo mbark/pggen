@@ -94,16 +94,20 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 	// Add declarers to leader file.
 	goQueryFiles[firstIndex].Declarers = allDeclarers.ListAll()
 
-	// Drop imports a file turned out not to need.
+	// Drop imports a file turned out not to need. genericConn covers the whole
+	// package, so its method set is read from every file, not just this one —
+	// and Pkg is not linked up until after templating.
+	chMethods := chConnMethodsOf(goQueryFiles)
 	for i, file := range goQueryFiles {
 		if file.Dialect == codegen.DialectClickHouse {
 			if !file.needsClickHouseImport() {
 				goQueryFiles[i].Imports = removeImport(goQueryFiles[i].Imports,
 					"github.com/ClickHouse/clickhouse-go/v2")
 			}
-			if !file.IsLeader {
-				// Only the leader declares genericConn, which is what names
-				// the driver types.
+			// driver.Rows and driver.Row are named only by genericConn, which
+			// only the leader declares — and only for the methods the
+			// package's queries call.
+			if !file.IsLeader || !chMethods.needsDriverPkg() {
 				goQueryFiles[i].Imports = removeImport(goQueryFiles[i].Imports,
 					"github.com/ClickHouse/clickhouse-go/v2/lib/driver")
 			}

@@ -30,16 +30,7 @@ type DBQuerier struct {
 	conn genericConn // underlying ClickHouse transport to use
 }
 
-// genericConn is a connection to ClickHouse, like clickhouse.Conn or a
-// decorator that wraps one.
-type genericConn interface {
-	// Select runs the query and scans every row into dest, a pointer to a
-	// slice of structs.
-	Select(ctx context.Context, dest any, query string, args ...any) error
-	Query(ctx context.Context, query string, args ...any) (driver.Rows, error)
-	QueryRow(ctx context.Context, query string, args ...any) driver.Row
-	Exec(ctx context.Context, query string, args ...any) error
-}
+{{ .EmitChGenericConn }}
 
 // NewQuerier creates a DBQuerier that implements Querier. conn is typically
 // a clickhouse.Conn.
