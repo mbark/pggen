@@ -106,7 +106,11 @@ Things that are easy to miss:
     syntax, so they stay runnable in `clickhouse-client`.
   - ClickHouse enums map to `string`. They are anonymous — the labels are the type — so
     there is no name to derive a Go type from, and two columns sharing a label set are the
-    same type. `--go-type "Enum8('a' = 1, 'b' = 2)=pkg.T"` overrides a specific one.
+    same type. `--go-type "Enum8('a' = 1, 'b' = 2)=pkg.T"` overrides a specific one — and
+    `pkg.T` has to be a `sql.Scanner` or a type the driver already handles, because
+    clickhouse-go decodes into nothing else. A plain named type compiles and fails at run
+    time. `chgen`'s `--go-type` splits on the *last* `=`, since the enum type carries its
+    own. `example/clickhouse_multi` covers both.
   - With `join_use_nulls` off (the default), a LEFT JOIN does **not** make the right side's
     columns `Nullable` — unmatched rows get type defaults like `''` and `0`. Inference is
     only correct under the settings the application connects with; pass them with

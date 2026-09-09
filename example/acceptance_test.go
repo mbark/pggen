@@ -346,6 +346,21 @@ func TestClickHouseExamples(t *testing.T) {
 				"--query-glob", "example/clickhouse_cdr/query.sql",
 			},
 		},
+		{
+			// Two query files in one package, plus --acronym and --go-type.
+			// The flags are part of what is asserted: --go-type on an enum
+			// only parses because the flag splits on the last "=", and the
+			// override resolves to a type in the generated package itself,
+			// which the emitter has to leave unqualified.
+			name: "example/clickhouse_multi",
+			args: []string{
+				"--schema-glob", "example/clickhouse_multi/schema.sql",
+				"--query-glob", "example/clickhouse_multi/*_query.sql",
+				"--acronym", "msisdn=MSISDN",
+				"--go-type", "Enum8('MOC' = 1, 'SMO' = 2, 'GPRS' = 7)=" +
+					"github.com/mbark/pggen/example/clickhouse_multi.RecordType",
+			},
+		},
 	}
 	if *update {
 		t.Log("updating integration test generated files")

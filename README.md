@@ -134,7 +134,19 @@ Two things differ from the Postgres output, both because ClickHouse does:
 - **Enums map to `string`.** Unlike a Postgres enum, a ClickHouse enum is
   anonymous — the labels *are* the type — so there is no name to give the
   generated Go type. Use `--go-type` to map a particular enum to something
-  richer.
+  richer:
+
+  ```shell
+  chgen gen go --query-glob 'cdr/*.sql' \
+      --go-type "Enum8('MOC' = 1, 'GPRS' = 7)=example.com/cdr.RecordType"
+  ```
+
+  Note what the target has to be. clickhouse-go decodes into the Go type a
+  column maps to natively, or into a `sql.Scanner`, **and into nothing else**.
+  A plain named type compiles and then fails at run time with `converting
+  Enum8 to *cdr.RecordType is unsupported`, so an override that is only a
+  rename does not work here. `example/clickhouse_multi` shows the form that
+  does.
 
 `chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
 supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.

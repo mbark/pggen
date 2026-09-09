@@ -65,19 +65,6 @@ func (tq TemplatedQuery) EmitChResultSignature() (string, error) {
 	return "(" + result + ", error)", nil
 }
 
-// EmitChZeroResult is the value to return alongside an error.
-func (tq TemplatedQuery) EmitChZeroResult() (string, error) {
-	switch tq.ResultKind {
-	case ast.ResultKindExec:
-		return "", nil
-	case ast.ResultKindMany:
-		return "nil, ", nil
-	}
-	// :one returns the zero value of the element type, which the generated
-	// code has already declared as "item".
-	return "item, ", nil
-}
-
 // EmitChParamNames emits the query arguments.
 //
 // ClickHouse parameters are named rather than positional: the query says

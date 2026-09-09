@@ -160,13 +160,9 @@ func newGenCmd() *ffcli.Command {
 				acros[word] = replacement
 			}
 
-			typeOverrides := make(map[string]string, len(*goTypes))
-			for _, typeAssoc := range *goTypes {
-				if strings.Count(typeAssoc, "=") != 1 {
-					return fmt.Errorf("--go-type must have format <chType>=<goType>; got %s", typeAssoc)
-				}
-				ss := strings.SplitN(typeAssoc, "=", 2)
-				typeOverrides[ss[0]] = ss[1]
+			typeOverrides, err := parseGoTypes(*goTypes)
+			if err != nil {
+				return err
 			}
 
 			err = pggen.Generate(pggen.GenerateOptions{
@@ -214,4 +210,24 @@ func main() {
 		fmt.Printf("ERROR: %s\n", err.Error())
 		os.Exit(1)
 	}
+}
+
+// parseGoTypes reads the --go-type flag, whose format is <chType>=<goType>.
+//
+// It splits on the last "=" rather than the only one, because a ClickHouse
+// type can contain "=" and routinely does: an enum spells its labels in the
+// type, as Enum8('MOC' = 1, 'GPRS' = 7), and that is exactly the type most
+// worth overriding. A Go type reference cannot contain "=", so the last one is
+// always the separator.
+func parseGoTypes(goTypes []string) (map[string]string, error) {
+	overrides := make(map[string]string, len(goTypes))
+	for _, typeAssoc := range goTypes {
+		i := strings.LastIndex(typeAssoc, "=")
+		if i <= 0 || i == len(typeAssoc)-1 {
+			return nil, fmt.Errorf(
+				"--go-type must have format <chType>=<goType>; got %q", typeAssoc)
+		}
+		overrides[typeAssoc[:i]] = typeAssoc[i+1:]
+	}
+	return overrides, nil
 }
