@@ -97,8 +97,9 @@ Things that are easy to miss:
   own pair, `ch_type_resolver.go` and `ch_known_types.go`, keyed by the canonical type name
   rather than an OID.
 - **ClickHouse specifics.** `internal/ch` is a pure, database-free model of the ClickHouse
-  type system plus a parser for type names; `internal/chinfer` runs `DESCRIBE` to learn a
-  query's result columns. Two behaviours are easy to trip over:
+  type system plus a parser for type names, plus the one SQL scanner both the parameter
+  rewrites and `ch.SplitStatements` walk with; `internal/chinfer` runs `DESCRIBE` to learn
+  a query's result columns. A few behaviours are easy to trip over:
   - The emitted SQL rewrites `{name:Type}` to `cast(@name AS Type)`
     (`ch.RewriteParams`). Server-side parameters travel as text and clickhouse-go renders
     `time.Time`, `uuid.UUID` and `decimal.Decimal` in forms the server rejects; the `@name`
@@ -109,8 +110,13 @@ Things that are easy to miss:
     same type. `--go-type "Enum8('a' = 1, 'b' = 2)=pkg.T"` overrides a specific one — and
     `pkg.T` has to be a `sql.Scanner` or a type the driver already handles, because
     clickhouse-go decodes into nothing else. A plain named type compiles and fails at run
-    time. `chgen`'s `--go-type` splits on the *last* `=`, since the enum type carries its
-    own. `example/clickhouse_multi` covers both.
+    time. `--go-type` splits on the *last* `=`, since the enum type carries its own.
+    `example/clickhouse_multi` covers both.
+  - **`:exec` gets a weaker check than Postgres.** `DESCRIBE` is SELECT-shaped and so is
+    `EXPLAIN`, so an `INSERT` can only be *parsed*, not analysed, without running it.
+    `chinfer.checkSyntax` runs `EXPLAIN AST`, which catches a malformed query but not one
+    naming a column that does not exist. That is the price of not needing S3 credentials
+    at generation time for `INSERT ... SELECT FROM s3(...)`.
   - With `join_use_nulls` off (the default), a LEFT JOIN does **not** make the right side's
     columns `Nullable` — unmatched rows get type defaults like `''` and `0`. Inference is
     only correct under the settings the application connects with; pass them with

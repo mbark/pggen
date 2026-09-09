@@ -151,6 +151,11 @@ Two things differ from the Postgres output, both because ClickHouse does:
 `chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
 supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.
 
+An `:exec` query is checked less thoroughly than the rest. ClickHouse will only
+analyse a query it can run as a `SELECT`, so an `INSERT` is parsed rather than
+resolved: a malformed one fails at generation, but one naming a column that
+does not exist fails when your application runs it.
+
 ## Pitch
 
 Why should you use `pggen` instead of the [myriad] of Go SQL bindings?
