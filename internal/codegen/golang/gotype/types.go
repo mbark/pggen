@@ -67,8 +67,7 @@ type (
 	// OpaqueType is a type where only the name is known, as with a user-provided
 	// custom type.
 	OpaqueType struct {
-		SQLType sqltype.Type // original database type
-		Name    string       // name of the unqualified Go type
+		Name string // name of the unqualified Go type
 	}
 
 	// PointerType is a pointer to another Go type.
@@ -108,10 +107,13 @@ func (o *PointerType) BaseName() string { return "*" + o.Elem.BaseName() }
 func (e *VoidType) Import() string   { return "" }
 func (e *VoidType) BaseName() string { return "" }
 
+// getTypePackage returns the package a leaf type comes from.
+//
+// Only leaves have one. An array, a pointer, or a map is qualified part by
+// part — the parts can come from different packages — so QualifyType peels
+// those before it gets here.
 func getTypePackage(typ Type) string {
 	switch typ := typ.(type) {
-	case *ArrayType:
-		return getTypePackage(typ.Elem)
 	case *CompositeType:
 		return ""
 	case *EnumType:
@@ -120,8 +122,6 @@ func getTypePackage(typ Type) string {
 		return typ.PkgPath
 	case *OpaqueType:
 		return ""
-	case *PointerType:
-		return getTypePackage(typ.Elem)
 	case *VoidType:
 		return ""
 	default:
@@ -133,24 +133,20 @@ func getTypePackage(typ Type) string {
 // otherPkgPath. If aliases is non-nil, it maps full package paths to import
 // aliases for resolving name collisions.
 func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
-	sb := &strings.Builder{}
-	// A map qualifies its key and value independently; they can come from
-	// different packages.
-	if mapType, ok := typ.(*MapType); ok {
-		return "map[" + QualifyType(mapType.Key, otherPkgPath, aliases...) + "]" +
-			QualifyType(mapType.Val, otherPkgPath, aliases...)
-	}
-	arrType, isArr := typ.(*ArrayType)
-	if isArr {
-		sb.WriteString("[]")
-		typ = arrType.Elem
-	}
-	ptrType, isPtr := typ.(*PointerType)
-	if isPtr {
-		sb.WriteString("*")
-		typ = ptrType.Elem
+	// A composite type qualifies each of its parts on its own, recursively:
+	// the parts can come from different packages, and a map or an array can
+	// appear at any depth. Only a leaf carries an import.
+	switch t := typ.(type) {
+	case *MapType:
+		return "map[" + QualifyType(t.Key, otherPkgPath, aliases...) + "]" +
+			QualifyType(t.Val, otherPkgPath, aliases...)
+	case *ArrayType:
+		return "[]" + QualifyType(t.Elem, otherPkgPath, aliases...)
+	case *PointerType:
+		return "*" + QualifyType(t.Elem, otherPkgPath, aliases...)
 	}
 
+	sb := &strings.Builder{}
 	pkg := getTypePackage(typ)
 	if typ.Import() == otherPkgPath || typ.Import() == "" || pkg == "" {
 		sb.WriteString(typ.BaseName())
@@ -251,11 +247,6 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 		}
 	}
 	var typ Type = &OpaqueType{Name: name}
-	// On array types, the database type goes on the Array. In all other cases,
-	// it goes on the OpaqueType.
-	if t, ok := typ.(*OpaqueType); ok && !isArr {
-		t.SQLType = sqlType
-	}
 
 	if isQualifiedType := idx != -1; isQualifiedType {
 		pkgPath := bs[:idx]
@@ -290,18 +281,23 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 // MustParseKnownType creates a gotype.Type by parsing a fully qualified Go type
 // that pgx supports natively like "github.com/jackc/pgtype.Int4Array", or most
 // builtin types like "string" and []*int16.
-func MustParseKnownType(qualType string, sqlType sqltype.Type) Type {
-	typ, err := ParseOpaqueType(qualType, sqlType)
+func MustParseKnownType(qualType string) Type {
+	typ, err := ParseOpaqueType(qualType, nil)
 	if err != nil {
 		panic(err.Error())
 	}
 	return typ
 }
 
-// MustParseOpaqueType creates a gotype.Type by parsing a fully qualified Go
-// type unsupported by pgx supports natively like "github.com/example/Foo"
-func MustParseOpaqueType(qualType string) Type {
-	typ, err := ParseOpaqueType(qualType, nil)
+// MustParseKnownArrayType creates a gotype.Type for a Go slice backed by a
+// database array type, like []int32 for _int4.
+//
+// The database type is not decoration: the array's name is what RegisterTypes
+// registers the type under. Taking a sqltype.ArrayType rather than a
+// sqltype.Type makes "this Go slice needs a database array" a compile-time
+// requirement instead of a run-time check.
+func MustParseKnownArrayType(qualType string, sqlType sqltype.ArrayType) Type {
+	typ, err := ParseOpaqueType(qualType, sqlType)
 	if err != nil {
 		panic(err.Error())
 	}

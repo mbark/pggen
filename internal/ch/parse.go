@@ -2,6 +2,7 @@ package ch
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -354,8 +355,15 @@ func (p *parser) parseEnum(bits int) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if bits == 8 && (v < -128 || v > 127) {
-			return nil, p.errf("Enum8 value %d for label %q is out of range", v, label)
+		// Enum.Values is int16, so an unchecked Enum16 value would truncate
+		// silently and the truncated value would end up in the generated SQL.
+		lo, hi := math.MinInt16, math.MaxInt16
+		if bits == 8 {
+			lo, hi = math.MinInt8, math.MaxInt8
+		}
+		if v < lo || v > hi {
+			return nil, p.errf("Enum%d value %d for label %q is out of range",
+				bits, v, label)
 		}
 		e.Labels = append(e.Labels, label)
 		e.Values = append(e.Values, int16(v))

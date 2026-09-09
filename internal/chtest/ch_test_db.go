@@ -13,13 +13,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/mbark/pggen/internal/chdocker"
+	"github.com/mbark/pggen/internal/ch"
 )
 
 // CleanupFunc drops the database and closes the connections.
@@ -57,10 +58,33 @@ func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string, Clean
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// The ClickHouse behind these tests is the long-lived one from
+	// docker-compose, so anything this function creates and then abandons
+	// stays there until someone drops it by hand. Each resource is registered
+	// for release as soon as it exists, and the whole stack runs on t.Cleanup
+	// as well, because a t.Fatalf below never reaches the caller's defer.
+	var release []func(context.Context)
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			for i := len(release) - 1; i >= 0; i-- {
+				release[i](ctx)
+			}
+		})
+	}
+	t.Cleanup(cleanup)
+
 	admin, err := clickhouse.Open(Options("default"))
 	if err != nil {
 		t.Fatalf("connect to docker clickhouse: %s", err)
 	}
+	release = append(release, func(context.Context) {
+		if err := admin.Close(); err != nil {
+			t.Errorf("close admin conn: %s", err)
+		}
+	})
 	if err := admin.Ping(ctx); err != nil {
 		t.Fatalf("ping docker clickhouse at %s: %s", Addr, err)
 	}
@@ -70,30 +94,27 @@ func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string, Clean
 		t.Fatalf("create new database: %s", err)
 	}
 	t.Logf("created database: %s", database)
+	release = append(release, func(ctx context.Context) {
+		if err := admin.Exec(ctx, "DROP DATABASE "+database); err != nil {
+			t.Errorf("drop database %s: %s", database, err)
+		}
+	})
 
 	conn, err := clickhouse.Open(Options(database))
 	if err != nil {
 		t.Fatalf("connect to new database %s: %s", database, err)
 	}
-	for _, stmt := range chdocker.SplitStatements(sql) {
+	release = append(release, func(context.Context) {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close database conn: %s", err)
+		}
+	})
+	for _, stmt := range ch.SplitStatements(sql) {
 		if err := conn.Exec(ctx, stmt); err != nil {
 			t.Fatalf("run sql %q: %s", truncate(stmt), err)
 		}
 	}
 
-	cleanup := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := conn.Close(); err != nil {
-			t.Errorf("close database conn: %s", err)
-		}
-		if err := admin.Exec(ctx, "DROP DATABASE "+database); err != nil {
-			t.Errorf("drop database %s: %s", database, err)
-		}
-		if err := admin.Close(); err != nil {
-			t.Errorf("close admin conn: %s", err)
-		}
-	}
 	return conn, DSN(database), cleanup
 }
 

@@ -3,15 +3,10 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/mbark/pggen"
-	"github.com/mbark/pggen/internal/flags"
-	"github.com/mbark/pggen/internal/paths"
+	"github.com/mbark/pggen/internal/cli"
 	"github.com/mbark/pggen/internal/texts"
 	"github.com/peterbourgon/ff/v3/ffcli"
 )
@@ -41,60 +36,23 @@ EXAMPLES
   pggen gen go --schema-glob schema.sql --query-glob query.sql --acronym api
 `
 
-func run() error {
-	rootFlagSet := flag.NewFlagSet("root", flag.ExitOnError)
-	rootCmd := &ffcli.Command{
-		ShortUsage: "pggen <subcommand> [options...]",
-		LongHelp:   flagHelp,
-		FlagSet:    rootFlagSet,
-		Subcommands: []*ffcli.Command{
-			newGenCmd(),
-			newVersionCmd(),
-		},
-	}
-	rootCmd.Exec = func(ctx context.Context, args []string) error {
-		fmt.Println(ffcli.DefaultUsageFunc(rootCmd))
-		os.Exit(1)
-		return nil
-	}
-	if err := rootCmd.ParseAndRun(context.Background(), os.Args[1:]); err != nil {
-		return err
-	}
-	return nil
-}
-
-func newVersionCmd() *ffcli.Command {
-	cmd := &ffcli.Command{
-		Name:       "version",
-		ShortUsage: "prints pggen version",
-		Exec: func(ctx context.Context, args []string) error {
-			fmt.Printf("pggen version %s, commit %s\n", version, commit)
-			return nil
-		},
-	}
-	return cmd
+var labels = cli.Labels{
+	Cmd:      "pggen",
+	DB:       "Postgres",
+	TypeName: "<pgType>",
+	SchemaHelp: "create schema in Postgres from all sql, sql.gz, or shell " +
+		"scripts (*.sh) that match a glob, like 'migrations/*.sql'",
+	GoTypeHelp: "custom type mapping from Postgres to fully qualified Go type, " +
+		"like 'device_type=github.com/mbark/pggen.DeviceType'",
 }
 
 func newGenCmd() *ffcli.Command {
 	fset := flag.NewFlagSet("go", flag.ExitOnError)
-	outputDir := fset.String("output-dir", "",
-		"where to write generated code; defaults to same directory as query files")
 	postgresConn := fset.String("postgres-connection", "",
 		`optional connection string to a postgres database, like: `+
 			`"user=postgres host=localhost dbname=pggen"`)
-	queryGlobs := flags.Strings(fset, "query-glob", nil,
-		"generate code for all SQL files that match glob, like 'queries/**/*.sql'")
-	schemaGlobs := flags.Strings(fset, "schema-glob", nil,
-		"create schema in Postgres from all sql, sql.gz, or shell "+
-			"scripts (*.sh) that match a glob, like 'migrations/*.sql'")
-	acronyms := flags.Strings(fset, "acronym", nil,
-		"lowercase acronym that should convert to all caps like 'api', "+
-			"or custom mapping like 'apis=APIs'")
-	goTypes := flags.Strings(fset, "go-type", nil,
-		"custom type mapping from Postgres to fully qualified Go type, "+
-			"like 'device_type=github.com/mbark/pggen.DeviceType'")
-	inlineParamCount := fset.Int("inline-param-count", 2,
-		"number of params (inclusive) to inline when calling querier methods; 0 always generates a struct")
+	genFlags := cli.RegisterGenFlags(fset, labels)
+
 	goSubCmd := &ffcli.Command{
 		Name:       "go",
 		ShortUsage: "pggen gen go --query-glob glob [--schema-glob <glob>]... [flags]",
@@ -105,100 +63,35 @@ func newGenCmd() *ffcli.Command {
 			present, pggen creates a Docker container to query the database.
 		`),
 		Exec: func(ctx context.Context, args []string) error {
-			// Preconditions.
-			if len(*queryGlobs) == 0 {
-				return fmt.Errorf("pggen gen go: at least one file in --query-glob must match")
-			}
-			queries, err := paths.ExpandSortGlobs(*queryGlobs)
+			gen, err := genFlags.Resolve()
 			if err != nil {
 				return err
 			}
-			schemas, err := paths.ExpandSortGlobs(*schemaGlobs)
-			if err != nil {
-				return err
-			}
-			// Deduce output directory.
-			outDir := *outputDir
-			if outDir == "" {
-				for _, file := range queries {
-					dir := filepath.Dir(file)
-					if outDir != "" && dir != outDir {
-						return fmt.Errorf("cannot deduce output dir because query files use different dirs; " +
-							"specify explicitly with --output-dir")
-					}
-					outDir = dir
-				}
-			}
-
-			outDir, _ = filepath.Abs(outDir)
-
-			// Parse two acronym formats: "--acronym api" and "--acronym oids=OIDs"
-			acros := make(map[string]string)
-			for _, acro := range *acronyms {
-				ss := strings.SplitN(acro, "=", 2)
-				word := ss[0]
-				if word != strings.ToLower(word) {
-					return fmt.Errorf("acronym %q should be lower case", word)
-				}
-				replacement := strings.ToUpper(word)
-				if len(ss) > 1 {
-					replacement = ss[1]
-				}
-				acros[word] = replacement
-			}
-
-			typeOverrides := make(map[string]string, len(*goTypes))
-			for _, typeAssoc := range *goTypes {
-				if strings.Count(typeAssoc, "=") != 1 {
-					return fmt.Errorf("--go-type must have format <pgType>=<goType>; got %s", typeAssoc)
-				}
-				ss := strings.SplitN(typeAssoc, "=", 2)
-				typeOverrides[ss[0]] = ss[1]
-			}
-
-			// Codegen.
 			err = pggen.Generate(pggen.GenerateOptions{
 				Language:         pggen.LangGo,
 				Dialect:          pggen.DialectPostgres,
 				ConnString:       *postgresConn,
-				SchemaFiles:      schemas,
-				QueryFiles:       queries,
-				OutputDir:        outDir,
-				Acronyms:         acros,
-				TypeOverrides:    typeOverrides,
+				SchemaFiles:      gen.SchemaFiles,
+				QueryFiles:       gen.QueryFiles,
+				OutputDir:        gen.OutputDir,
+				Acronyms:         gen.Acronyms,
+				TypeOverrides:    gen.TypeOverrides,
 				LogLevel:         slog.LevelInfo,
-				InlineParamCount: *inlineParamCount,
+				InlineParamCount: gen.InlineParamCount,
 			})
 			if err != nil {
 				return err
 			}
-
-			fileDesc := "files"
-			if len(queries) == 1 {
-				fileDesc = "file"
-			}
-			fmt.Printf("generated %d query %s\n", len(queries), fileDesc)
+			cli.ReportGenerated(len(gen.QueryFiles))
 			return nil
 		},
 	}
-	cmd := &ffcli.Command{
-		Name:        "gen",
-		ShortUsage:  "pggen gen (go|<lang>) [options...]",
-		ShortHelp:   "generates code in specific language for Postgres query files",
-		FlagSet:     nil,
-		Subcommands: []*ffcli.Command{goSubCmd},
-	}
-	cmd.Exec = func(ctx context.Context, args []string) error {
-		fmt.Println(ffcli.DefaultUsageFunc(cmd))
-		os.Exit(1)
-		return nil
-	}
-	return cmd
+	return cli.GenCmd(labels, goSubCmd)
 }
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Printf("ERROR: %s\n", err.Error())
-		os.Exit(1)
-	}
+	cli.Main(cli.RootCmd(labels, flagHelp,
+		newGenCmd(),
+		cli.VersionCmd(labels, version, commit),
+	))
 }

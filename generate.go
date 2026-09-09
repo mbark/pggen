@@ -14,6 +14,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/ch"
 	"github.com/mbark/pggen/internal/chdocker"
 	"github.com/mbark/pggen/internal/chinfer"
 	"github.com/mbark/pggen/internal/codegen"
@@ -195,20 +196,11 @@ func connectClickHouse(ctx context.Context, opts GenerateOptions) (driver.Conn, 
 		_ = stop()
 		return nil, nil, fmt.Errorf("open clickhouse connection: %w", err)
 	}
-	if err := conn.Ping(ctx); err != nil {
-		_ = stop()
-		return nil, nil, fmt.Errorf("ping clickhouse: %w", err)
-	}
 
-	// With an external connection, load the schema files ourselves; the Docker
-	// path has already run them as init scripts.
-	if opts.ConnString != "" {
-		if err := loadClickHouseSchemas(ctx, conn, opts.SchemaFiles); err != nil {
-			_ = conn.Close()
-			return nil, nil, err
-		}
-	}
-
+	// clickhouse.Open is lazy and does not dial, so the connection exists —
+	// with its pool and background goroutines — from here on, whether or not
+	// the server ever answers. Every failure below has to close it as well as
+	// stop the container.
 	cleanup := func() error {
 		closeErr := conn.Close()
 		if stopErr := stop(); stopErr != nil {
@@ -216,6 +208,21 @@ func connectClickHouse(ctx context.Context, opts GenerateOptions) (driver.Conn, 
 		}
 		return closeErr
 	}
+
+	if err := conn.Ping(ctx); err != nil {
+		_ = cleanup()
+		return nil, nil, fmt.Errorf("ping clickhouse: %w", err)
+	}
+
+	// With an external connection, load the schema files ourselves; the Docker
+	// path has already run them as init scripts.
+	if opts.ConnString != "" {
+		if err := loadClickHouseSchemas(ctx, conn, opts.SchemaFiles); err != nil {
+			_ = cleanup()
+			return nil, nil, err
+		}
+	}
+
 	return conn, cleanup, nil
 }
 
@@ -230,7 +237,7 @@ func loadClickHouseSchemas(ctx context.Context, conn driver.Conn, schemaFiles []
 		if err != nil {
 			return fmt.Errorf("read clickhouse schema file %s: %w", file, err)
 		}
-		for _, stmt := range chdocker.SplitStatements(string(bs)) {
+		for _, stmt := range ch.SplitStatements(string(bs)) {
 			if err := conn.Exec(ctx, stmt); err != nil {
 				return fmt.Errorf("run clickhouse schema file %s: %w", file, err)
 			}

@@ -1,4 +1,4 @@
-package chdocker
+package ch
 
 import (
 	"testing"
@@ -36,6 +36,21 @@ func TestSplitStatements(t *testing.T) {
 			name: "semicolon_in_line_comment",
 			sql:  "SELECT 1 -- trailing ; comment\n; SELECT 2",
 			want: []string{"SELECT 1", "SELECT 2"},
+		},
+		{
+			name: "semicolon_in_block_comment",
+			sql:  "CREATE TABLE t (/* cols; see docs */ a String) ENGINE = Memory;",
+			want: []string{"CREATE TABLE t (\n a String) ENGINE = Memory"},
+		},
+		{
+			name: "trailing_comment_is_not_a_statement",
+			sql:  "SELECT 1;\n-- nothing follows\n",
+			want: []string{"SELECT 1"},
+		},
+		{
+			name: "comment_still_separates_tokens",
+			sql:  "SELECT 1--c\nFROM t",
+			want: []string{"SELECT 1\n\nFROM t"},
 		},
 		{
 			name: "escaped_quote_in_literal",

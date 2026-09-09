@@ -78,14 +78,11 @@ func (tr PgTypeResolver) Resolve(t sqltype.Type, nullable bool, pkgPath string) 
 			typ.SQLColumnNames = comp.ColumnNames
 			return typ, nil
 		case *gotype.ImportType:
-			ot := typ.Type.(*gotype.OpaqueType)
-			ot.SQLType = pgt
 			return typ, nil
 		case *gotype.EnumType:
 			typ.SQLName = pgt.(pg.EnumType).Name
 			return typ, nil
 		case *gotype.OpaqueType:
-			typ.SQLType = pgt
 			return typ, nil
 		case *gotype.PointerType:
 			return typ, nil

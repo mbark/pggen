@@ -57,7 +57,7 @@ func TestMustParseKnownType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.qualType, func(t *testing.T) {
-			got := MustParseOpaqueType(tt.qualType)
+			got := MustParseKnownType(tt.qualType)
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
@@ -112,6 +112,54 @@ func TestQualifyType(t *testing.T) {
 			name:     "[]example.com/foo.Bar - example.com/foo",
 			typ:      &ArrayType{Elem: &ImportType{PkgPath: "example.com/foo", Type: &OpaqueType{Name: "Bar"}}},
 			otherPkg: "example.com/foo",
+			want:     "[]Bar",
+		},
+		{
+			name: "map[string]time.Time",
+			typ: &MapType{
+				Key: &OpaqueType{Name: "string"},
+				Val: &ImportType{PkgPath: "time", Type: &OpaqueType{Name: "Time"}},
+			},
+			otherPkg: "example.com/foo",
+			want:     "map[string]time.Time",
+		},
+		{
+			// ClickHouse spells this Array(Map(String, DateTime)). A map only
+			// used to be qualified at the top level, so reaching one through
+			// an array panicked.
+			name: "[]map[string]time.Time",
+			typ: &ArrayType{Elem: &MapType{
+				Key: &OpaqueType{Name: "string"},
+				Val: &ImportType{PkgPath: "time", Type: &OpaqueType{Name: "Time"}},
+			}},
+			otherPkg: "example.com/foo",
+			want:     "[]map[string]time.Time",
+		},
+		{
+			name: "map[string][]foo.com/qux.Bar",
+			typ: &MapType{
+				Key: &OpaqueType{Name: "string"},
+				Val: &ArrayType{Elem: &ImportType{PkgPath: "foo.com/qux", Type: &OpaqueType{Name: "Bar"}}},
+			},
+			otherPkg: "example.com/foo",
+			want:     "map[string][]qux.Bar",
+		},
+		{
+			// Array(Array(T)): the inner element used to come out unqualified,
+			// because only the outermost [] was peeled.
+			name: "[][]foo.com/qux.Bar",
+			typ: &ArrayType{Elem: &ArrayType{
+				Elem: &ImportType{PkgPath: "foo.com/qux", Type: &OpaqueType{Name: "Bar"}},
+			}},
+			otherPkg: "example.com/foo",
+			want:     "[][]qux.Bar",
+		},
+		{
+			// An unqualified otherPkg matching the type's package means the
+			// same package, so the name loses its qualifier but keeps its [].
+			name:     "[]foo.Bar - foo",
+			typ:      &ArrayType{Elem: &ImportType{PkgPath: "foo", Type: &OpaqueType{Name: "Bar"}}},
+			otherPkg: "foo",
 			want:     "[]Bar",
 		},
 	}

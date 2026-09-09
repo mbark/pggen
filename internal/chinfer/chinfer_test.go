@@ -305,6 +305,81 @@ func TestInferrer_settingNamedParams(t *testing.T) {
 	}
 }
 
+// TestInferrer_trailingLineComment matters because DESCRIBE wraps the query in
+// parentheses. With the closing paren on the same line, a query that ends in a
+// -- comment swallowed it and ClickHouse reported a syntax error pointing
+// nowhere near the comment.
+func TestInferrer_trailingLineComment(t *testing.T) {
+	inf := newInferrer(t)
+
+	query := &ast.SourceQuery{
+		Name: "CommentedCDRs",
+		PreparedSQL: texts.Dedent(`
+			SELECT a_num
+			FROM cdr -- only the one column
+			;`),
+		ResultKind: ast.ResultKindMany,
+	}
+
+	got, err := inf.InferTypes(query)
+	if err != nil {
+		t.Fatalf("InferTypes returned error: %v", err)
+	}
+	wantOutputs := []codegen.OutputColumn{
+		{PgName: "a_num", Type: ch.Scalar{Name: "String"}},
+	}
+	if diff := cmp.Diff(wantOutputs, got.Outputs); diff != "" {
+		t.Errorf("outputs mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestInferrer_execIsChecked matters because an :exec query has no result
+// columns to infer, so it would be easy to send it through untouched. EXPLAIN
+// AST parses it without running it — as far as the server will go, since
+// EXPLAIN proper is SELECT-only.
+func TestInferrer_execIsChecked(t *testing.T) {
+	inf := newInferrer(t)
+
+	t.Run("a well-formed insert passes", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name: "InsertCDR",
+			PreparedSQL: texts.Dedent(`
+				INSERT INTO cdr (a_num, units)
+				SELECT {a_num:String}, {units:Int64}`),
+			ResultKind: ast.ResultKindExec,
+		}
+		got, err := inf.InferTypes(query)
+		if err != nil {
+			t.Fatalf("InferTypes returned error: %v", err)
+		}
+		if len(got.Outputs) != 0 {
+			t.Errorf("an :exec query should have no outputs, got %v", got.Outputs)
+		}
+		wantInputs := []codegen.InputParam{
+			{PgName: "a_num", Type: ch.Scalar{Name: "String"}},
+			{PgName: "units", Type: ch.Scalar{Name: "Int64"}},
+		}
+		if diff := cmp.Diff(wantInputs, got.Inputs); diff != "" {
+			t.Errorf("inputs mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a malformed insert is rejected", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name:        "BadInsert",
+			PreparedSQL: "INSERT INTO cdr (a_num) SELCT 'x'",
+			ResultKind:  ast.ResultKindExec,
+		}
+		_, err := inf.InferTypes(query)
+		if err == nil {
+			t.Fatal("InferTypes accepted a query ClickHouse cannot parse")
+		}
+		if !strings.Contains(err.Error(), "clickhouse rejected the query") {
+			t.Errorf("error %q should say clickhouse rejected the query", err)
+		}
+	})
+}
+
 func TestInferrer_InferTypes_errors(t *testing.T) {
 	inf := newInferrer(t)
 	tests := []struct {

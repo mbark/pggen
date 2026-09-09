@@ -11,13 +11,14 @@ package ch
 import (
 	"strconv"
 	"strings"
+
+	"github.com/mbark/pggen/internal/sqltype"
 )
 
 // Type is a ClickHouse type. String reports the canonical ClickHouse spelling,
 // which is also the type's identity.
 type Type interface {
-	String() string
-	Key() string
+	sqltype.Type // String() is the canonical spelling; Key() namespaces it
 	isCHType()
 }
 
@@ -171,8 +172,15 @@ func (t Unsupported) Key() string    { return chKey(t) }
 // dialect's type identity.
 func chKey(t Type) string { return "ch:" + t.String() }
 
-// ElemType implements sqltype.ArrayType.
-func (t Array) ElemType() Type { return t.Elem }
+// ElemType implements sqltype.ArrayType, which the Go code generator type
+// asserts on to check that a --go-type slice override is backed by an array.
+// The return type has to be sqltype.Type and not ch.Type: Go matches a method
+// set exactly, so narrowing it here would silently fail the assertion.
+func (t Array) ElemType() sqltype.Type { return t.Elem }
+
+// A missing or mistyped ElemType only shows up as a --go-type override being
+// rejected at run time, so pin the interface at compile time instead.
+var _ sqltype.ArrayType = Array{}
 
 // IsNullable reports whether values of t can be null, looking through the
 // LowCardinality encoding that does not affect nullability.

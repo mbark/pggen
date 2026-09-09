@@ -259,27 +259,40 @@ func TestExamples(t *testing.T) {
 	pggen := compilePggen(t)
 	// Start a single Docker container to use for all tests. Each test will create
 	// a new database in the Postgres cluster.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	docker, err := pgdocker.Start(ctx, nil)
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStart()
+	docker, err := pgdocker.Start(startCtx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer errs.CaptureT(t, func() error { return docker.Stop(ctx) }, "stop docker")
+	// Stopping the container gets a context of its own: the one that started
+	// it may well have expired by the time the last subtest is done, and a
+	// container that is never stopped outlives the test run.
+	defer errs.CaptureT(t, func() error {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return docker.Stop(stopCtx)
+	}, "stop docker")
 	mainConnStr, err := docker.ConnString()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log("started dockerized postgres: " + mainConnStr)
-	conn, err := pgx.Connect(ctx, mainConnStr)
-	defer errs.CaptureT(t, func() error { return conn.Close(ctx) }, "close conn")
+	conn, err := pgx.Connect(startCtx, mainConnStr)
+	defer errs.CaptureT(t, func() error {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return conn.Close(closeCtx)
+	}, "close conn")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			dbName := "pggen_example_" + strconv.FormatInt(int64(rand.Int31()), 36)
-			if _, err = conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
+			if _, err := conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
 				t.Fatal(err)
 			}
 			connStr := mainConnStr + " dbname=" + dbName
@@ -368,13 +381,20 @@ func TestClickHouseExamples(t *testing.T) {
 	chgen := compileBinary(t, "chgen")
 
 	// One container for every test; each test gets its own database in it.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	docker, err := chdocker.Start(ctx, nil)
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelStart()
+	docker, err := chdocker.Start(startCtx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer errs.CaptureT(t, func() error { return docker.Stop(ctx) }, "stop docker")
+	// Stopping the container gets a context of its own: the one that started
+	// it may well have expired by the time the last subtest is done, and a
+	// container that is never stopped outlives the test run.
+	defer errs.CaptureT(t, func() error {
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		return docker.Stop(stopCtx)
+	}, "stop docker")
 	mainConnStr := docker.ConnString()
 	t.Log("started dockerized clickhouse: " + mainConnStr)
 
@@ -390,10 +410,19 @@ func TestClickHouseExamples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
 			dbName := "chgen_example_" + strconv.FormatInt(int64(rand.Int31()), 36)
 			if err := conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() {
+				dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := conn.Exec(dropCtx, `DROP DATABASE `+dbName); err != nil {
+					t.Errorf("drop database %s: %s", dbName, err)
+				}
+			})
 			dbOpts := *opts
 			dbOpts.Auth.Database = dbName
 			connStr := fmt.Sprintf("clickhouse://%s:%s@%s/%s",

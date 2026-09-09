@@ -188,13 +188,12 @@ func (tf TemplatedFile) EmitChGenericConn() string {
 
 // needsClickHouseImport reports whether a file references the clickhouse
 // package, which it does only to name parameters with clickhouse.Named.
+//
+// Variants are not consulted: rejectPaginate fails the whole run before
+// templating if a ClickHouse query has a variant group, so a ClickHouse file
+// never has any. Reading them here would suggest paginate= is half-supported.
 func (tf TemplatedFile) needsClickHouseImport() bool {
 	for _, q := range tf.Queries {
-		if len(q.Inputs) > 0 {
-			return true
-		}
-	}
-	for _, q := range tf.Variants {
 		if len(q.Inputs) > 0 {
 			return true
 		}

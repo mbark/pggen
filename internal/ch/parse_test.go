@@ -108,6 +108,16 @@ func TestParse(t *testing.T) {
 			want: Enum{Bits: 16, Labels: []string{"a", "b"}, Values: []int16{1000, 2000}},
 		},
 		{
+			name: "enum16_at_the_bounds",
+			src:  "Enum16('lo' = -32768, 'hi' = 32767)",
+			want: Enum{Bits: 16, Labels: []string{"lo", "hi"}, Values: []int16{-32768, 32767}},
+		},
+		{
+			name: "enum8_at_the_bounds",
+			src:  "Enum8('lo' = -128, 'hi' = 127)",
+			want: Enum{Bits: 8, Labels: []string{"lo", "hi"}, Values: []int16{-128, 127}},
+		},
+		{
 			name: "enum8_negative",
 			src:  "Enum8('neg' = -1, 'zero' = 0)",
 			want: Enum{Bits: 8, Labels: []string{"neg", "zero"}, Values: []int16{-1, 0}},
@@ -198,6 +208,11 @@ func TestParse_errors(t *testing.T) {
 		{name: "enum_missing_value", src: "Enum8('a')"},
 		{name: "enum_non_numeric_value", src: "Enum8('a' = x)"},
 		{name: "enum8_value_out_of_range", src: "Enum8('a' = 999)"},
+		{name: "enum8_value_out_of_range_negative", src: "Enum8('a' = -999)"},
+		// Enum.Values is int16, so an unchecked value here truncated silently
+		// and the truncated value went on into the generated SQL.
+		{name: "enum16_value_out_of_range", src: "Enum16('a' = 70000)"},
+		{name: "enum16_value_out_of_range_negative", src: "Enum16('a' = -70000)"},
 		{name: "fixed_string_not_a_number", src: "FixedString(abc)"},
 		{name: "trailing_backslash", src: `DateTime('UTC\`},
 	}

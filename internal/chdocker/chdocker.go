@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"text/template"
 	"time"
 
@@ -126,50 +125,3 @@ func (c *Client) GetContainerLogs() (string, error) { return c.db.GetContainerLo
 
 // Stop stops the running container, if any.
 func (c *Client) Stop(ctx context.Context) error { return c.db.Stop(ctx) }
-
-// SplitStatements splits a SQL string on semicolons that are not inside a
-// string literal or a comment. ClickHouse executes one statement per call, so
-// a schema file has to be taken apart before it can be loaded.
-func SplitStatements(sql string) []string {
-	var stmts []string
-	var sb strings.Builder
-	for i := 0; i < len(sql); i++ {
-		c := sql[i]
-		switch c {
-		case '\'', '`', '"':
-			quote := c
-			sb.WriteByte(c)
-			for i++; i < len(sql); i++ {
-				sb.WriteByte(sql[i])
-				if sql[i] == '\\' && i+1 < len(sql) {
-					i++
-					sb.WriteByte(sql[i])
-					continue
-				}
-				if sql[i] == quote {
-					break
-				}
-			}
-		case '-':
-			if i+1 < len(sql) && sql[i+1] == '-' {
-				for i < len(sql) && sql[i] != '\n' {
-					i++
-				}
-				sb.WriteByte('\n')
-			} else {
-				sb.WriteByte(c)
-			}
-		case ';':
-			if stmt := strings.TrimSpace(sb.String()); stmt != "" {
-				stmts = append(stmts, stmt)
-			}
-			sb.Reset()
-		default:
-			sb.WriteByte(c)
-		}
-	}
-	if stmt := strings.TrimSpace(sb.String()); stmt != "" {
-		stmts = append(stmts, stmt)
-	}
-	return stmts
-}

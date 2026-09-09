@@ -23,35 +23,18 @@ func scanSQL(sql string, onText func(string), onParam func(Param) error) error {
 			onText(sql[prev:upto])
 		}
 	}
-	for i := 0; i < len(sql); i++ {
-		switch c := sql[i]; c {
-		case '\'', '`', '"':
-			// A string literal or quoted identifier.
-			quote := c
-			for i++; i < len(sql); i++ {
-				if sql[i] == '\\' {
-					i++
-					continue
-				}
-				if sql[i] == quote {
-					break
-				}
-			}
-		case '-':
-			if i+1 < len(sql) && sql[i+1] == '-' {
-				for i < len(sql) && sql[i] != '\n' {
-					i++
-				}
-			}
-		case '/':
-			if i+1 < len(sql) && sql[i+1] == '*' {
-				i += 2
-				for i+1 < len(sql) && (sql[i] != '*' || sql[i+1] != '/') {
-					i++
-				}
-				i++
-			}
-		case '{':
+	for i := 0; i < len(sql); {
+		// Literals and comments are skipped whole so that a brace inside one
+		// is not mistaken for a parameter. SplitStatements walks the same way.
+		if next := skipLiteral(sql, i); next != i {
+			i = next
+			continue
+		}
+		if next := skipComment(sql, i); next != i {
+			i = next
+			continue
+		}
+		if sql[i] == '{' {
 			end := strings.IndexByte(sql[i:], '}')
 			if end < 0 {
 				return fmt.Errorf("unclosed { in query; a ClickHouse parameter looks like {name:Type}")
@@ -76,9 +59,11 @@ func scanSQL(sql string, onText func(string), onParam func(Param) error) error {
 			if err := onParam(Param{Name: name, Type: typ}); err != nil {
 				return err
 			}
-			i += end
-			prev = i + 1
+			i += end + 1
+			prev = i
+			continue
 		}
+		i++
 	}
 	emitText(len(sql))
 	return nil

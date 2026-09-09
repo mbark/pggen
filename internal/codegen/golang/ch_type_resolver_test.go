@@ -119,6 +119,16 @@ func TestChTypeResolver_wrappers(t *testing.T) {
 			chType: "Map(String, Array(Int64))", want: "map[string][]int64",
 		},
 		{
+			name: "Map inside an Array",
+			// A map reached through an array used to panic while being
+			// qualified, and contributed no imports when it did not.
+			chType: "Array(Map(String, DateTime))", want: "[]map[string]time.Time",
+		},
+		{
+			name:   "Map with a value from another package",
+			chType: "Map(UUID, Nullable(Decimal(18, 6)))", want: "map[uuid.UUID]*decimal.Decimal",
+		},
+		{
 			name: "an enum is a string",
 			// The labels are the type — there is no name to derive a Go type
 			// from, and two columns with the same labels are the same type.
@@ -189,6 +199,14 @@ func TestChTypeResolver_overrides(t *testing.T) {
 			},
 			chType: "Nullable(String)",
 			want:   "brand.MaybeName",
+		},
+		{
+			// A Go slice override is only accepted if the ClickHouse type is
+			// an array, which ch.Array has to say through sqltype.ArrayType.
+			name:      "override an array with a Go slice",
+			overrides: map[string]string{"Array(String)": "[]example.com/brand.Name"},
+			chType:    "Array(String)",
+			want:      "[]brand.Name",
 		},
 	}
 	for _, tt := range tests {

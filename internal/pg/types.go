@@ -174,3 +174,5 @@ func oidKey(oid uint32) string { return "pg:" + strconv.FormatUint(uint64(oid), 
 
 // ElemType implements sqltype.ArrayType.
 func (b ArrayType) ElemType() sqltype.Type { return b.Elem }
+
+var _ sqltype.ArrayType = ArrayType{}

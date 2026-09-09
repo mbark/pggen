@@ -80,6 +80,26 @@ func Start(ctx context.Context, cfg Config) (client *Client, mErr error) {
 	if err != nil {
 		return nil, fmt.Errorf("run container: %w", err)
 	}
+	c.containerID = containerID
+	c.port = port
+
+	// Clean up the container if we fail after starting it. Registered before
+	// the log capture so it runs after it — stopping the container also
+	// removes it, and its logs with it.
+	//
+	// The guard is on mErr alone. Guarding on the returned client as well
+	// would make this dead code: every failing path returns a nil client, and
+	// the successful one leaves mErr nil.
+	defer func() {
+		if mErr == nil {
+			return
+		}
+		stopCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := c.Stop(stopCtx); err != nil {
+			slog.ErrorContext(stopCtx, "stop dbdocker client", slog.String("error", err.Error()))
+		}
+	}()
 	// Enrich errors with the container's own logs.
 	defer func() {
 		if mErr != nil {
@@ -91,19 +111,7 @@ func Start(ctx context.Context, cfg Config) (client *Client, mErr error) {
 			}
 		}
 	}()
-	// Clean up the container if we fail after starting it.
-	defer func() {
-		if client != nil && mErr != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			if err := client.Stop(ctx); err != nil {
-				slog.ErrorContext(ctx, "stop dbdocker client", slog.String("error", err.Error()))
-			}
-		}
-	}()
 
-	c.containerID = containerID
-	c.port = port
 	if err := cfg.WaitReady(ctx, port); err != nil {
 		return nil, fmt.Errorf("wait for %s to be ready: %w", cfg.Name, err)
 	}

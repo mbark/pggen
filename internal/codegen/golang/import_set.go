@@ -23,19 +23,29 @@ func (s *ImportSet) AddPackage(p string) {
 
 // AddType adds all fully qualified package paths needed for type and any child
 // types.
+//
+// Every wrapper has to recurse, not just report its own Import. A pointer and
+// a map both answer "" — a pointer because it adds no package of its own, a
+// map because its key and value can come from different ones — and an array
+// answers with its element's, which is right for a leaf element and wrong for
+// a composite one. Walking the whole tree is the only way each package that
+// actually appears in the emitted type ends up imported.
 func (s *ImportSet) AddType(typ gotype.Type) {
 	s.AddPackage(typ.Import())
-	unwrapped := gotype.UnwrapNestedType(typ)
-	switch t := unwrapped.(type) {
+	switch t := typ.(type) {
 	case *gotype.CompositeType:
 		for _, childType := range t.FieldTypes {
 			s.AddType(childType)
 		}
 	case *gotype.MapType:
-		// A map's Import is empty because its key and value can come from
-		// different packages, so recurse into both.
 		s.AddType(t.Key)
 		s.AddType(t.Val)
+	case *gotype.ArrayType:
+		s.AddType(t.Elem)
+	case *gotype.PointerType:
+		s.AddType(t.Elem)
+	case *gotype.ImportType:
+		s.AddType(t.Type)
 	}
 }
 

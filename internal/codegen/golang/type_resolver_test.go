@@ -55,7 +55,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:    pg.BaseType{Name: "custom_type"},
 			want: &gotype.ImportType{
 				PkgPath: "example.com/custom",
-				Type:    &gotype.OpaqueType{SQLType: pg.BaseType{Name: "custom_type"}, Name: "QualType"},
+				Type:    &gotype.OpaqueType{Name: "QualType"},
 			},
 		},
 		{
@@ -65,7 +65,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			want: &gotype.PointerType{
 				Elem: &gotype.ImportType{
 					PkgPath: "example.com/custom",
-					Type:    &gotype.OpaqueType{SQLType: pg.BaseType{Name: "custom_type"}, Name: "QualType"},
+					Type:    &gotype.OpaqueType{Name: "QualType"},
 				},
 			},
 		},
@@ -89,10 +89,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			nullable: false,
 			want: &gotype.ImportType{
 				PkgPath: "github.com/jackc/pgx/v5/pgtype",
-				Type: &gotype.OpaqueType{
-					SQLType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
-					Name:    "Point",
-				},
+				Type:    &gotype.OpaqueType{Name: "Point"},
 			},
 		},
 		{
@@ -101,10 +98,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			nullable: true,
 			want: &gotype.ImportType{
 				PkgPath: "github.com/jackc/pgx/v5/pgtype",
-				Type: &gotype.OpaqueType{
-					SQLType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
-					Name:    "Point",
-				},
+				Type:    &gotype.OpaqueType{Name: "Point"},
 			},
 		},
 		{
@@ -113,10 +107,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:    pg.BaseType{Name: "int8", ID: pgtype.Int8OID},
 			want: &gotype.ImportType{
 				PkgPath: "example.com/custom",
-				Type: &gotype.OpaqueType{
-					SQLType: pg.BaseType{Name: "int8", ID: pgtype.Int8OID},
-					Name:    "QualType",
-				},
+				Type:    &gotype.OpaqueType{Name: "QualType"},
 			},
 		},
 		{
@@ -176,8 +167,8 @@ func TestTypeResolver_Resolve(t *testing.T) {
 					Name:           "Qux",
 					FieldNames:     []string{"ID", "Foo"},
 					FieldTypes: []gotype.Type{
-						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string", SQLType: pg.Text}},
-						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int", SQLType: pg.Int8}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int"}},
 					},
 				},
 			},
@@ -223,17 +214,17 @@ func TestType_QualifyRel(t *testing.T) {
 			want:         "Device",
 		},
 		{
-			typ:          gotype.MustParseOpaqueType("example.com/bar.Baz"),
+			typ:          gotype.MustParseKnownType("example.com/bar.Baz"),
 			otherPkgPath: "example.com/bar",
 			want:         "Baz",
 		},
 		{
-			typ:          gotype.MustParseKnownType("string", pg.Text),
+			typ:          gotype.MustParseKnownType("string"),
 			otherPkgPath: "example.com/bar",
 			want:         "string",
 		},
 		{
-			typ:          gotype.MustParseKnownType("string", pg.Text),
+			typ:          gotype.MustParseKnownType("string"),
 			otherPkgPath: "",
 			want:         "string",
 		},
@@ -269,8 +260,8 @@ func TestCreateCompositeType(t *testing.T) {
 					Name:           "Qux",
 					FieldNames:     []string{"One", "TwoA"},
 					FieldTypes: []gotype.Type{
-						&gotype.PointerType{Elem: &gotype.OpaqueType{SQLType: pg.Text, Name: "string"}},
-						&gotype.PointerType{Elem: &gotype.OpaqueType{SQLType: pg.Int8, Name: "int"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int"}},
 					},
 				},
 			},
