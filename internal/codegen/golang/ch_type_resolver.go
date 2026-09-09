@@ -2,7 +2,6 @@ package golang
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/mbark/pggen/internal/casing"
 	"github.com/mbark/pggen/internal/ch"
@@ -74,7 +73,11 @@ func (tr ChTypeResolver) resolve(t ch.Type, pkgPath string) (gotype.Type, error)
 		return &gotype.MapType{SQLName: t.String(), Key: key, Val: val}, nil
 
 	case ch.Enum:
-		return tr.resolveEnum(t, pkgPath), nil
+		// A ClickHouse enum is a string with a constrained set of values, and
+		// that is how it comes back over the wire. There is no name to borrow
+		// for a Go type either, since the labels are the type. Use --go-type
+		// to map a particular enum to something richer.
+		return chString, nil
 
 	case ch.Tuple:
 		return nil, fmt.Errorf("no Go type for ClickHouse type %s: "+
@@ -91,38 +94,4 @@ func (tr ChTypeResolver) resolve(t ch.Type, pkgPath string) (gotype.Type, error)
 	}
 	return nil, fmt.Errorf("no Go type found for ClickHouse type %s: "+
 		"map it with --go-type %q=<goType>", t, t.String())
-}
-
-// resolveEnum builds the Go type for a ClickHouse enum.
-//
-// ClickHouse enums are anonymous — the labels are the type, and there is no
-// pg_enum-style name to borrow — so the Go type is named after the labels
-// themselves. Two columns with the same label set therefore share one
-// generated type, which is what you want: they are the same type.
-func (tr ChTypeResolver) resolveEnum(t ch.Enum, pkgPath string) gotype.Type {
-	return gotype.NewEnumType(pkgPath, chEnumName(t), t.String(), "ClickHouse", t.Labels, tr.caser)
-}
-
-// chEnumName derives a name for an anonymous enum from its labels, like
-// "moc_smo_gprs_enum" for Enum8('MOC' = 1, 'SMO' = 2, 'GPRS' = 7), which the
-// caser then turns into MocSmoGprsEnum.
-//
-// ClickHouse enums have no name to borrow — the labels are the type — so two
-// columns with the same labels share one generated type, which is right:
-// they are the same type. Rename it with --go-type if the derived name reads
-// badly.
-func chEnumName(t ch.Enum) string {
-	const maxLabels = 3
-	parts := make([]string, 0, maxLabels+1)
-	for i, label := range t.Labels {
-		if i == maxLabels {
-			break
-		}
-		parts = append(parts, label)
-	}
-	if len(parts) == 0 {
-		return "enum"
-	}
-	parts = append(parts, "enum")
-	return strings.Join(parts, "_")
 }

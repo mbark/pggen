@@ -117,17 +117,7 @@ func (tq TemplatedQuery) EmitChRowStruct() string {
 	sb.WriteString(tq.Name)
 	sb.WriteString("Row struct {\n")
 
-	maxNameLen, maxTypeLen := 0, 0
-	for _, out := range outs {
-		if len(out.UpperName) > maxNameLen {
-			maxNameLen = len(out.UpperName)
-		}
-		if len(out.QualType) > maxTypeLen {
-			maxTypeLen = len(out.QualType)
-		}
-	}
-	maxNameLen++ // 1 space to separate name from type
-	maxTypeLen++ // 1 space to separate type from struct tags
+	maxNameLen, maxTypeLen := getLongestOutput(outs)
 	maxTagLen := 0
 	for _, out := range outs {
 		if n := len(chTag(out.PgName)); n > maxTagLen {
@@ -167,46 +157,6 @@ func (tq TemplatedQuery) EmitChPreparedSQL() (string, error) {
 		return strconv.Quote(sql), nil
 	}
 	return "`" + sql + "`", nil
-}
-
-// EmitChParamStruct emits the params struct for a query.
-//
-// It aligns on the Go field name. The Postgres emitter aligns on the SQL name
-// instead, which pads by the wrong amount whenever the two differ; that shows
-// up on every ClickHouse struct, since ClickHouse parameters are snake_case.
-func (tq TemplatedQuery) EmitChParamStruct() string {
-	if tq.isInlineParams() {
-		return ""
-	}
-	maxNameLen, maxTypeLen := 0, 0
-	for _, in := range tq.Inputs {
-		if len(in.UpperName) > maxNameLen {
-			maxNameLen = len(in.UpperName)
-		}
-		if len(in.QualType) > maxTypeLen {
-			maxTypeLen = len(in.QualType)
-		}
-	}
-	maxNameLen++ // 1 space to separate name from type
-	maxTypeLen++ // 1 space to separate type from struct tags
-
-	sb := &strings.Builder{}
-	sb.WriteString("\n\ntype ")
-	sb.WriteString(tq.Name)
-	sb.WriteString("Params struct {\n")
-	for _, in := range tq.Inputs {
-		sb.WriteString("\t")
-		sb.WriteString(in.UpperName)
-		sb.WriteString(strings.Repeat(" ", maxNameLen-len(in.UpperName)))
-		sb.WriteString(in.QualType)
-		sb.WriteString(strings.Repeat(" ", maxTypeLen-len(in.QualType)))
-		sb.WriteString("`json:")
-		sb.WriteString(strconv.Quote(in.RawName.PgName))
-		sb.WriteString("`")
-		sb.WriteRune('\n')
-	}
-	sb.WriteString("}")
-	return sb.String()
 }
 
 func chTag(pgName string) string {

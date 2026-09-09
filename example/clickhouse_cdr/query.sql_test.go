@@ -87,7 +87,8 @@ func TestQuerier(t *testing.T) {
 
 		row := got[0]
 		assert.Equal(t, "46709999999", row.ANum)
-		assert.Equal(t, MOCSMOGPRSEnumGPRS, row.RecordType)
+		// An Enum8 column comes back as its label; chgen maps it to string.
+		assert.Equal(t, "GPRS", row.RecordType)
 		require.NotNil(t, row.Rat)
 		assert.Equal(t, "LTE", *row.Rat)
 		assert.Equal(t, "telia", row.Provider)

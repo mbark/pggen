@@ -104,6 +104,9 @@ Things that are easy to miss:
     `time.Time`, `uuid.UUID` and `decimal.Decimal` in forms the server rejects; the `@name`
     form uses client-side binding, which gets them right. Query files keep the native
     syntax, so they stay runnable in `clickhouse-client`.
+  - ClickHouse enums map to `string`. They are anonymous — the labels are the type — so
+    there is no name to derive a Go type from, and two columns sharing a label set are the
+    same type. `--go-type "Enum8('a' = 1, 'b' = 2)=pkg.T"` overrides a specific one.
   - With `join_use_nulls` off (the default), a LEFT JOIN does **not** make the right side's
     columns `Nullable` — unmatched rows get type defaults like `''` and `0`. Inference is
     only correct under the settings the application connects with; pass them with

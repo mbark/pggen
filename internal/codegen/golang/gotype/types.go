@@ -49,10 +49,7 @@ type (
 	// a Postgres enum.
 	EnumType struct {
 		SQLName string // name of the backing database enum type
-		// SQLKindName names the database in the doc comment, like "Postgres"
-		// or "ClickHouse".
-		SQLKindName string
-		Name        string // name of the unqualified Go type
+		Name    string // name of the unqualified Go type
 		// Labels of the Postgres enum formatted as Go identifiers ordered in the
 		// same order as in Postgres.
 		Labels []string
@@ -188,13 +185,10 @@ func NewArrayType(sqlName string, elemType Type) Type {
 	}
 }
 
-// NewEnumType builds the Go type for a database enum. goNameSource is what the
-// Go type name is derived from, and sqlName is what the database calls the
-// type; they differ for ClickHouse, whose enums are anonymous.
-func NewEnumType(pkgPath, goNameSource, sqlName, sqlKindName string, sqlLabels []string, caser casing.Caser) Type {
-	name := caser.ToUpperGoIdent(goNameSource)
+func NewEnumType(pkgPath, sqlName string, sqlLabels []string, caser casing.Caser) Type {
+	name := caser.ToUpperGoIdent(sqlName)
 	if name == "" {
-		name = ChooseFallbackName(goNameSource, "UnnamedEnum")
+		name = ChooseFallbackName(sqlName, "UnnamedEnum")
 	}
 	labels := make([]string, len(sqlLabels))
 	values := make([]string, len(sqlLabels))
@@ -207,11 +201,10 @@ func NewEnumType(pkgPath, goNameSource, sqlName, sqlKindName string, sqlLabels [
 		values[i] = sqlLabels[i]
 	}
 	typ := &EnumType{
-		SQLName:     sqlName,
-		SQLKindName: sqlKindName,
-		Name:        name,
-		Labels:      labels,
-		Values:      values,
+		SQLName: sqlName,
+		Name:    name,
+		Labels:  labels,
+		Values:  values,
 	}
 	if pkgPath != "" {
 		return &ImportType{

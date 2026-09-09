@@ -69,7 +69,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying Postgres transport to use
+	conn genericConn // underlying Postgres transport to use
 }
 
 // genericConn is a connection like *pgx.Conn, pgx.Tx, or *pgxpool.Pool.
@@ -253,9 +253,9 @@ VALUES ($1, $2, $3)
 RETURNING *;`
 
 type InsertCustomerParams struct {
-	FirstName  string `json:"first_name"`
-	LastName   string `json:"last_name"`
-	Email      string `json:"email"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
 }
 
 type InsertCustomerRow struct {
@@ -296,9 +296,9 @@ VALUES ($1, $2, $3)
 RETURNING *;`
 
 type InsertOrderParams struct {
-	OrderDate   pgtype.Timestamptz `json:"order_date"`
-	OrderTotal  pgtype.Numeric     `json:"order_total"`
-	CustID      int32              `json:"cust_id"`
+	OrderDate  pgtype.Timestamptz `json:"order_date"`
+	OrderTotal pgtype.Numeric     `json:"order_total"`
+	CustID     int32              `json:"cust_id"`
 }
 
 type InsertOrderRow struct {

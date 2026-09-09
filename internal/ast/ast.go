@@ -85,11 +85,11 @@ type Pragmas struct {
 // concrete statement per sort key and direction, plus a default, each with a
 // clean ORDER BY and a matching cursor predicate.
 type SortSpec struct {
-	Name      string          // spec name, e.g. "payments_sort"
-	Keys      []SortKey       // declared sort keys
-	DefaultBy []string        // columns for the default ordering (no sort key given)
+	Name      string            // spec name, e.g. "payments_sort"
+	Keys      []SortKey         // declared sort keys
+	DefaultBy []string          // columns for the default ordering (no sort key given)
 	Cursor    map[string]string // column -> cursor pggen.arg name; empty means ordering-only (no keyset predicate)
-	Tiebreak  string          // raw ORDER BY terms appended to every variant, e.g. "created_at DESC"
+	Tiebreak  string            // raw ORDER BY terms appended to every variant, e.g. "created_at DESC"
 }
 
 // IsKeyset reports whether this spec drives a keyset cursor predicate. Specs

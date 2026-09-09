@@ -34,7 +34,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying ClickHouse transport to use
+	conn genericConn // underlying ClickHouse transport to use
 }
 
 // genericConn is a connection to ClickHouse, like clickhouse.Conn or a
@@ -52,33 +52,6 @@ type genericConn interface {
 // a clickhouse.Conn.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
-}
-
-// MOCSMOGPRSEnum represents the ClickHouse enum "Enum8('MOC' = 1, 'SMO' = 2, 'GPRS' = 7)".
-type MOCSMOGPRSEnum string
-
-const (
-	MOCSMOGPRSEnumMOC  MOCSMOGPRSEnum = "MOC"
-	MOCSMOGPRSEnumSMO  MOCSMOGPRSEnum = "SMO"
-	MOCSMOGPRSEnumGPRS MOCSMOGPRSEnum = "GPRS"
-)
-
-func (m MOCSMOGPRSEnum) String() string { return string(m) }
-
-// Scan implements sql.Scanner. clickhouse-go will not convert an enum
-// column into a bare named string type, but it honours this.
-func (m *MOCSMOGPRSEnum) Scan(src any) error {
-	switch v := src.(type) {
-	case string:
-		*m = MOCSMOGPRSEnum(v)
-	case *string:
-		if v != nil {
-			*m = MOCSMOGPRSEnum(*v)
-		}
-	default:
-		return fmt.Errorf("cannot scan %T into MOCSMOGPRSEnum", src)
-	}
-	return nil
 }
 
 const findDataUsageSQL = `SELECT
@@ -127,7 +100,7 @@ ORDER BY a_num, start_date;`
 
 type FindCDRsByProviderRow struct {
 	ANum           string            `ch:"a_num"           json:"a_num"`
-	RecordType     MOCSMOGPRSEnum    `ch:"record_type"     json:"record_type"`
+	RecordType     string            `ch:"record_type"     json:"record_type"`
 	Rat            *string           `ch:"rat"             json:"rat"`
 	Provider       string            `ch:"provider"        json:"provider"`
 	Units          int64             `ch:"units"           json:"units"`

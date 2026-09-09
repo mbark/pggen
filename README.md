@@ -131,6 +131,10 @@ Two things differ from the Postgres output, both because ClickHouse does:
   NULL.
 - **There is no batch interface.** ClickHouse has no query pipelining, so there
   are no `XBatch`/`XScan` methods. A `:many` query is a single `conn.Select`.
+- **Enums map to `string`.** Unlike a Postgres enum, a ClickHouse enum is
+  anonymous — the labels *are* the type — so there is no name to give the
+  generated Go type. Use `--go-type` to map a particular enum to something
+  richer.
 
 `chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
 supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.

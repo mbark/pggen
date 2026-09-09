@@ -27,7 +27,7 @@ type Querier interface {
 var _ Querier = &DBQuerier{}
 
 type DBQuerier struct {
-	conn  genericConn   // underlying ClickHouse transport to use
+	conn genericConn // underlying ClickHouse transport to use
 }
 
 // genericConn is a connection to ClickHouse, like clickhouse.Conn or a
@@ -53,7 +53,7 @@ func NewQuerier(conn genericConn) *DBQuerier {
 {{- range $i, $q := .Queries -}}
 {{- "\n\n" -}}
 const {{ $q.SQLVarName }} = {{ $q.EmitChPreparedSQL }}
-{{- $q.EmitChParamStruct -}}
+{{- $q.EmitParamStruct -}}
 {{- $q.EmitChRowStruct -}}
 {{- "\n\n" -}}
 // {{ $q.Name }} implements Querier.{{ $q.Name }}.
