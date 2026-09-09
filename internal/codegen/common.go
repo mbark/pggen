@@ -5,6 +5,8 @@
 package codegen
 
 import (
+	"strings"
+
 	"github.com/mbark/pggen/internal/ast"
 	"github.com/mbark/pggen/internal/sqltype"
 )
@@ -67,4 +69,21 @@ type OutputColumn struct {
 	// left join, and nullability is determined using rudimentary control-flow
 	// analysis. ClickHouse reports nullability exactly, in the type itself.
 	Nullable bool
+}
+
+// ExtractDoc returns the comment lines preceding a query, with the SQL comment
+// syntax stripped and the trailing "-- name: Foo :exec" line dropped.
+func ExtractDoc(query *ast.SourceQuery) []string {
+	if query.Doc == nil || len(query.Doc.List) <= 1 {
+		return nil
+	}
+	// Drop last line, like: "-- name: Foo :exec"
+	lines := make([]string, len(query.Doc.List)-1)
+	for i := range lines {
+		comment := query.Doc.List[i].Text
+		// TrimLeft to remove runs of dashes. TrimPrefix only removes fixed number.
+		noDashes := strings.TrimLeft(comment, "-")
+		lines[i] = strings.TrimSpace(noDashes)
+	}
+	return lines
 }

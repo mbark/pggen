@@ -46,7 +46,7 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 				"use :exec if query shouldn't return any columns",
 			query.Name, query.ResultKind)
 	}
-	doc := extractDoc(query)
+	doc := codegen.ExtractDoc(query)
 	return codegen.TypedQuery{
 		Name:         query.Name,
 		ResultKind:   query.ResultKind,
@@ -207,21 +207,6 @@ func createParamArgs(query *ast.SourceQuery) []interface{} {
 		args[i] = nil
 	}
 	return args
-}
-
-func extractDoc(query *ast.SourceQuery) []string {
-	if query.Doc == nil || len(query.Doc.List) <= 1 {
-		return nil
-	}
-	// Drop last line, like: "-- name: Foo :exec"
-	lines := make([]string, len(query.Doc.List)-1)
-	for i := range lines {
-		comment := query.Doc.List[i].Text
-		// TrimLeft to remove runs of dashes. TrimPrefix only removes fixed number.
-		noDashes := strings.TrimLeft(comment, "-")
-		lines[i] = strings.TrimSpace(noDashes)
-	}
-	return lines
 }
 
 func countVoids(outputs []codegen.OutputColumn) int {

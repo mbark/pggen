@@ -20,23 +20,29 @@ DOCKER_API_VERSION = "1.39"
 #   [env]
 #   DOCKER_HOST = "unix://{{ env.HOME }}/.docker/run/docker.sock"
 
-# --- Local Postgres ---
+# --- Local databases ---
 
 [tasks.start]
-description = "Start the local Postgres container"
+description = "Start the local Postgres and ClickHouse containers"
 run = "docker compose up -d"
 
 [tasks.stop]
-description = "Stop the local Postgres container"
+description = "Stop the local database containers"
 run = "docker compose down"
 
 [tasks.restart]
-description = "Recreate the local Postgres container"
+description = "Recreate the local database containers"
 run = ["docker compose down", "docker compose up -d"]
 
 [tasks.psql]
 description = "Open psql against the local Postgres container"
 run = "PGPASSWORD=hunter2 psql --host=127.0.0.1 --port=5555 --username=postgres pggen"
+
+[tasks.clickhouse-client]
+description = "Open clickhouse-client against the local ClickHouse container"
+run = """
+docker compose exec clickhouse clickhouse-client   --user default --password hunter2 --database pggen
+"""
 
 # --- Build, test, lint ---
 
