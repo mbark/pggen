@@ -23,11 +23,11 @@ func (c CompositeTypeDeclarer) DedupeKey() string {
 func (c CompositeTypeDeclarer) Declare(pkgPath string) (string, error) {
 	sb := &strings.Builder{}
 	// Doc string
-	if c.comp.PgComposite.Name != "" {
+	if c.comp.SQLName != "" {
 		sb.WriteString("// ")
 		sb.WriteString(c.comp.Name)
 		sb.WriteString(" represents the Postgres composite type ")
-		sb.WriteString(strconv.Quote(c.comp.PgComposite.Name))
+		sb.WriteString(strconv.Quote(c.comp.SQLName))
 		sb.WriteString(".\n")
 	}
 	// Struct declaration.
@@ -52,7 +52,7 @@ func (c CompositeTypeDeclarer) Declare(pkgPath string) (string, error) {
 		// JSON struct tag
 		sb.WriteString(strings.Repeat(" ", typeLen-len(qualType)))
 		sb.WriteString("`json:")
-		sb.WriteString(strconv.Quote(c.comp.PgComposite.ColumnNames[i]))
+		sb.WriteString(strconv.Quote(c.comp.SQLColumnNames[i]))
 		sb.WriteString("`")
 		sb.WriteRune('\n')
 	}

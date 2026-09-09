@@ -80,9 +80,13 @@ func newGenCmd() *ffcli.Command {
 	fset := flag.NewFlagSet("go", flag.ExitOnError)
 	outputDir := fset.String("output-dir", "",
 		"where to write generated code; defaults to same directory as query files")
-	postgresConn := fset.String("postgres-connection", "",
-		`optional connection string to a postgres database, like: `+
+	dialect := fset.String("dialect", "postgres",
+		"database the queries run against: postgres or clickhouse")
+	conn := fset.String("connection", "",
+		`optional connection string to the database, like: `+
 			`"user=postgres host=localhost dbname=pggen"`)
+	postgresConn := fset.String("postgres-connection", "",
+		"deprecated alias for --connection")
 	queryGlobs := flags.Strings(fset, "query-glob", nil,
 		"generate code for all SQL files that match glob, like 'queries/**/*.sql'")
 	schemaGlobs := flags.Strings(fset, "schema-glob", nil,
@@ -157,10 +161,25 @@ func newGenCmd() *ffcli.Command {
 				typeOverrides[ss[0]] = ss[1]
 			}
 
+			// --postgres-connection is the original spelling, kept working.
+			connString := *conn
+			if connString == "" {
+				connString = *postgresConn
+			} else if *postgresConn != "" {
+				return fmt.Errorf("set only one of --connection and --postgres-connection")
+			}
+
+			switch pggen.Dialect(*dialect) {
+			case pggen.DialectPostgres, pggen.DialectClickHouse:
+			default:
+				return fmt.Errorf("--dialect must be postgres or clickhouse; got %q", *dialect)
+			}
+
 			// Codegen.
 			err = pggen.Generate(pggen.GenerateOptions{
 				Language:         pggen.LangGo,
-				ConnString:       *postgresConn,
+				Dialect:          pggen.Dialect(*dialect),
+				ConnString:       connString,
 				SchemaFiles:      schemas,
 				QueryFiles:       queries,
 				OutputDir:        outDir,

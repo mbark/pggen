@@ -5,28 +5,42 @@ import (
 	"github.com/mbark/pggen/internal/casing"
 	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 	"github.com/mbark/pggen/internal/pg"
+	"github.com/mbark/pggen/internal/sqltype"
 	"strconv"
 	"strings"
 )
 
-// TypeResolver handles the mapping between Postgres and Go types.
-type TypeResolver struct {
+// TypeResolver maps a database type to the Go type that represents it. Each
+// dialect has its own implementation because the type systems don't line up:
+// Postgres identifies types by OID and resolves them through the catalog,
+// while ClickHouse names them structurally, like "Array(Nullable(String))".
+type TypeResolver interface {
+	Resolve(t sqltype.Type, nullable bool, pkgPath string) (gotype.Type, error)
+}
+
+// PgTypeResolver handles the mapping between Postgres and Go types.
+type PgTypeResolver struct {
 	caser     casing.Caser
 	overrides map[string]string
 }
 
-func NewTypeResolver(c casing.Caser, overrides map[string]string) TypeResolver {
+func NewPgTypeResolver(c casing.Caser, overrides map[string]string) PgTypeResolver {
 	overs := make(map[string]string, len(overrides))
 	for k, v := range overrides {
 		for _, alias := range listAliases(k) {
 			overs[alias] = v
 		}
 	}
-	return TypeResolver{caser: c, overrides: overs}
+	return PgTypeResolver{caser: c, overrides: overs}
 }
 
 // Resolve maps a Postgres type to a Go type.
-func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (gotype.Type, error) {
+func (tr PgTypeResolver) Resolve(t sqltype.Type, nullable bool, pkgPath string) (gotype.Type, error) {
+	pgt, ok := t.(pg.Type)
+	if !ok {
+		return nil, fmt.Errorf("resolve %q: not a Postgres type (%T)", t.String(), t)
+	}
+
 	// Custom user override.
 	if goType, ok := tr.overrides[pgt.String()]; ok {
 		opaque, err := gotype.ParseOpaqueType(goType, pgt)
@@ -56,20 +70,22 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 				}
 				return nil, fmt.Errorf("resolve known type %q does not have pg array type %q", typ, pgt)
 			}
-			typ.PgArray = arrTyp
+			typ.SQLName = arrTyp.Name
 			return typ, nil
 		case *gotype.CompositeType:
-			typ.PgComposite = pgt.(pg.CompositeType)
+			comp := pgt.(pg.CompositeType)
+			typ.SQLName = comp.Name
+			typ.SQLColumnNames = comp.ColumnNames
 			return typ, nil
 		case *gotype.ImportType:
 			ot := typ.Type.(*gotype.OpaqueType)
-			ot.PgType = pgt
+			ot.SQLType = pgt
 			return typ, nil
 		case *gotype.EnumType:
-			typ.PgEnum = pgt.(pg.EnumType)
+			typ.SQLName = pgt.(pg.EnumType).Name
 			return typ, nil
 		case *gotype.OpaqueType:
-			typ.PgType = pgt
+			typ.SQLType = pgt
 			return typ, nil
 		case *gotype.PointerType:
 			return typ, nil
@@ -87,9 +103,9 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 		if err != nil {
 			return nil, fmt.Errorf("resolve array elem type for array type %q: %w", pgt.Name, err)
 		}
-		return gotype.NewArrayType(pgt, elemType), nil
+		return gotype.NewArrayType(pgt.Name, elemType), nil
 	case pg.EnumType:
-		enum := gotype.NewEnumType(pkgPath, pgt, tr.caser)
+		enum := gotype.NewEnumType(pkgPath, pgt.Name, pgt.Labels, tr.caser)
 		if nullable {
 			return &gotype.PointerType{Elem: enum}, nil
 		}
@@ -110,7 +126,7 @@ func (tr TypeResolver) Resolve(pgt pg.Type, nullable bool, pkgPath string) (goty
 func CreateCompositeType(
 	pkgPath string,
 	pgt pg.CompositeType,
-	resolver TypeResolver,
+	resolver PgTypeResolver,
 	caser casing.Caser,
 ) (gotype.Type, error) {
 	name := caser.ToUpperGoIdent(pgt.Name)
@@ -132,10 +148,11 @@ func CreateCompositeType(
 		fieldTypes[i] = fieldType
 	}
 	ct := &gotype.CompositeType{
-		PgComposite: pgt,
-		Name:        name,
-		FieldNames:  fieldNames,
-		FieldTypes:  fieldTypes,
+		SQLName:        pgt.Name,
+		SQLColumnNames: pgt.ColumnNames,
+		Name:           name,
+		FieldNames:     fieldNames,
+		FieldTypes:     fieldTypes,
 	}
 	if pkgPath != "" {
 		return &gotype.ImportType{PkgPath: pkgPath, Type: ct}, nil

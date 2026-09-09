@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/mbark/pggen/internal/casing"
-	"github.com/mbark/pggen/internal/pg"
+	"github.com/mbark/pggen/internal/sqltype"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,23 +24,24 @@ type Type interface {
 type (
 	// ArrayType is a Go slice type.
 	ArrayType struct {
-		PgArray pg.ArrayType // original Postgres array type
-		Elem    Type         // element type of the slice, like int for []int
+		SQLName string // name of the backing database array type, like _int4
+		Elem    Type   // element type of the slice, like int for []int
 	}
 
 	// CompositeType is a struct type that represents a Postgres composite type.
 	CompositeType struct {
-		PgComposite pg.CompositeType // original Postgres composite type
-		Name        string           // Go-style type name in UpperCamelCase
-		FieldNames  []string         // Go-style child names in UpperCamelCase
-		FieldTypes  []Type
+		SQLName        string   // name of the backing database composite type
+		SQLColumnNames []string // names of the composite's columns, in order
+		Name           string   // Go-style type name in UpperCamelCase
+		FieldNames     []string // Go-style child names in UpperCamelCase
+		FieldTypes     []Type
 	}
 
 	// EnumType is a string type with constant values that maps to the labels of
 	// a Postgres enum.
 	EnumType struct {
-		PgEnum pg.EnumType // the original Postgres enum type
-		Name   string      // name of the unqualified Go type
+		SQLName string // name of the backing database enum type
+		Name    string // name of the unqualified Go type
 		// Labels of the Postgres enum formatted as Go identifiers ordered in the
 		// same order as in Postgres.
 		Labels []string
@@ -58,8 +59,8 @@ type (
 	// OpaqueType is a type where only the name is known, as with a user-provided
 	// custom type.
 	OpaqueType struct {
-		PgType pg.Type // original Postgres type
-		Name   string  // name of the unqualified Go type
+		SQLType sqltype.Type // original database type
+		Name    string       // name of the unqualified Go type
 	}
 
 	// PointerType is a pointer to another Go type.
@@ -158,33 +159,33 @@ func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) st
 	return sb.String()
 }
 
-func NewArrayType(pgArray pg.ArrayType, elemType Type) Type {
+func NewArrayType(sqlName string, elemType Type) Type {
 	return &ArrayType{
-		PgArray: pgArray,
+		SQLName: sqlName,
 		Elem:    elemType,
 	}
 }
 
-func NewEnumType(pkgPath string, pgEnum pg.EnumType, caser casing.Caser) Type {
-	name := caser.ToUpperGoIdent(pgEnum.Name)
+func NewEnumType(pkgPath, sqlName string, sqlLabels []string, caser casing.Caser) Type {
+	name := caser.ToUpperGoIdent(sqlName)
 	if name == "" {
-		name = ChooseFallbackName(pgEnum.Name, "UnnamedEnum")
+		name = ChooseFallbackName(sqlName, "UnnamedEnum")
 	}
-	labels := make([]string, len(pgEnum.Labels))
-	values := make([]string, len(pgEnum.Labels))
-	for i, label := range pgEnum.Labels {
+	labels := make([]string, len(sqlLabels))
+	values := make([]string, len(sqlLabels))
+	for i, label := range sqlLabels {
 		ident := caser.ToUpperGoIdent(label)
 		if ident == "" {
 			ident = ChooseFallbackName(label, "UnnamedLabel"+strconv.Itoa(i))
 		}
 		labels[i] = name + ident
-		values[i] = pgEnum.Labels[i]
+		values[i] = sqlLabels[i]
 	}
 	typ := &EnumType{
-		PgEnum: pgEnum,
-		Name:   name,
-		Labels: labels,
-		Values: values,
+		SQLName: sqlName,
+		Name:    name,
+		Labels:  labels,
+		Values:  values,
 	}
 	if pkgPath != "" {
 		return &ImportType{
@@ -196,13 +197,13 @@ func NewEnumType(pkgPath string, pgEnum pg.EnumType, caser casing.Caser) Type {
 }
 
 // ParseOpaqueType creates a Type by parsing a fully qualified Go type like
-// "github.com/jschaf/custom.Int4" with the backing pg.Type.
+// "github.com/jschaf/custom.Int4" with the backing database type.
 //
 //   - []int
 //   - []*int
 //   - *example.com/foo.Qux
 //   - []*example.com/foo.Qux
-func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
+func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 	bs := []byte(qualType)
 	isArr := bs[0] == '['
 	if isArr {
@@ -231,10 +232,10 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 		}
 	}
 	var typ Type = &OpaqueType{Name: name}
-	// On array types, the PgType goes on the Array. In all other cases, it
-	// goes on the OpaqueType.
+	// On array types, the database type goes on the Array. In all other cases,
+	// it goes on the OpaqueType.
 	if t, ok := typ.(*OpaqueType); ok && !isArr {
-		t.PgType = pgType
+		t.SQLType = sqlType
 	}
 
 	if isQualifiedType := idx != -1; isQualifiedType {
@@ -250,13 +251,18 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 	}
 
 	if isArr {
-		pgArr, ok := pgType.(pg.ArrayType)
-		// Ensure that if we have a Go slice type that the Postgres type is also
-		// an array. []byte is special since it maps to the Postgres bytea type.
-		if !ok && pgType != nil && qualType != "[]byte" {
-			return nil, fmt.Errorf("opaque pg type %T{%+v} for go type %q is not a pg.ArrayType", pgType, pgType, qualType)
+		arr, ok := sqlType.(sqltype.ArrayType)
+		// Ensure that if we have a Go slice type that the database type is also
+		// an array. []byte is special since it maps to scalar types like the
+		// Postgres bytea type.
+		if !ok && sqlType != nil && qualType != "[]byte" {
+			return nil, fmt.Errorf("opaque database type %T{%+v} for go type %q is not an array type", sqlType, sqlType, qualType)
 		}
-		typ = &ArrayType{PgArray: pgArr, Elem: typ}
+		sqlName := ""
+		if ok {
+			sqlName = arr.String()
+		}
+		typ = &ArrayType{SQLName: sqlName, Elem: typ}
 	}
 
 	return typ, nil
@@ -265,8 +271,8 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 // MustParseKnownType creates a gotype.Type by parsing a fully qualified Go type
 // that pgx supports natively like "github.com/jackc/pgtype.Int4Array", or most
 // builtin types like "string" and []*int16.
-func MustParseKnownType(qualType string, pgType pg.Type) Type {
-	typ, err := ParseOpaqueType(qualType, pgType)
+func MustParseKnownType(qualType string, sqlType sqltype.Type) Type {
+	typ, err := ParseOpaqueType(qualType, sqlType)
 	if err != nil {
 		panic(err.Error())
 	}

@@ -2,11 +2,12 @@ package golang
 
 import (
 	"fmt"
-	"github.com/mbark/pggen/internal/ast"
-	"github.com/mbark/pggen/internal/codegen/golang/gotype"
-	"github.com/mbark/pggen/internal/pginfer"
 	"strconv"
 	"strings"
+
+	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/codegen"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 )
 
 // TemplatedPackage is all templated files in a pggen invocation. The templated
@@ -224,7 +225,7 @@ type TemplatedParam struct {
 	LowerName string // name of the param in lowerCamelCase, like 'firstName' from pggen.arg('first_name')
 	QualType  string // package-qualified Go type to use for this param
 	Type      gotype.Type
-	RawName   pginfer.InputParam
+	RawName   codegen.InputParam
 }
 
 type TemplatedColumn struct {

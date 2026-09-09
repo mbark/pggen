@@ -4,6 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	gotok "go/token"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
 	"github.com/mbark/pggen/internal/codegen"
@@ -12,11 +18,6 @@ import (
 	"github.com/mbark/pggen/internal/parser"
 	"github.com/mbark/pggen/internal/pgdocker"
 	"github.com/mbark/pggen/internal/pginfer"
-	gotok "go/token"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 // Lang is a supported codegen language.
@@ -26,10 +27,30 @@ const (
 	LangGo Lang = "go"
 )
 
+// Dialect is a supported database backend. It is orthogonal to Lang: Lang
+// picks the language of the generated code, Dialect picks the database the
+// queries run against and therefore how their types are inferred.
+type Dialect string
+
+const (
+	DialectPostgres   Dialect = "postgres"
+	DialectClickHouse Dialect = "clickhouse"
+)
+
+// Inferrer turns a parsed query into a typed query by asking the database
+// about the query's parameter and result types. Each dialect has its own
+// implementation: pginfer prepares the query and reads Postgres OIDs back,
+// chinfer reads ClickHouse type names out of DESCRIBE.
+type Inferrer interface {
+	InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, error)
+}
+
 // GenerateOptions are the unparsed options that controls the generated Go code.
 type GenerateOptions struct {
 	// What language to generate code in.
 	Language Lang
+	// Which database the queries run against. Defaults to DialectPostgres.
+	Dialect Dialect
 	// The connection string to the running Postgres database to use to get type
 	// information for each query in QueryFiles.
 	//
@@ -79,18 +100,20 @@ func Generate(opts GenerateOptions) (mErr error) {
 	if opts.OutputDir == "" {
 		return fmt.Errorf("output dir must be set")
 	}
+	if opts.Dialect == "" {
+		opts.Dialect = DialectPostgres
+	}
 
-	// Postgres connection.
+	// Database connection.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	pgConn, errEnricher, cleanup, err := connectPostgres(ctx, opts)
+	inferrer, errEnricher, cleanup, err := connectInferrer(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("connect postgres: %w", err)
+		return err
 	}
-	defer errs.Capture(&mErr, cleanup, "close postgres connection")
+	defer errs.Capture(&mErr, cleanup, "close database connection")
 
 	// Parse queries.
-	inferrer := pginfer.NewInferrer(pgConn)
 	queryFiles, err := parseQueryFiles(opts.QueryFiles, inferrer)
 	if err != nil {
 		return errEnricher(err)
@@ -119,6 +142,23 @@ func Generate(opts GenerateOptions) (mErr error) {
 		return fmt.Errorf("unsupported output language %q", opts.Language)
 	}
 	return nil
+}
+
+// connectInferrer connects to the database for opts.Dialect and returns an
+// Inferrer backed by it, along with an error enricher and a cleanup func.
+func connectInferrer(ctx context.Context, opts GenerateOptions) (Inferrer, func(error) error, func() error, error) {
+	switch opts.Dialect {
+	case DialectPostgres:
+		pgConn, errEnricher, cleanup, err := connectPostgres(ctx, opts)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("connect postgres: %w", err)
+		}
+		return pginfer.NewInferrer(pgConn), errEnricher, cleanup, nil
+	case DialectClickHouse:
+		return nil, nil, nil, fmt.Errorf("dialect %q is not implemented yet", opts.Dialect)
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported dialect %q", opts.Dialect)
+	}
 }
 
 // connectPostgres connects to postgres using connString if given or by
@@ -177,7 +217,7 @@ func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func
 	return pgConn, nopErrEnricher, nopCleanup, nil
 }
 
-func parseQueryFiles(queryFiles []string, inferrer *pginfer.Inferrer) ([]codegen.QueryFile, error) {
+func parseQueryFiles(queryFiles []string, inferrer Inferrer) ([]codegen.QueryFile, error) {
 	files := make([]codegen.QueryFile, len(queryFiles))
 	for i, file := range queryFiles {
 		srcPath, err := filepath.Abs(file)
@@ -193,7 +233,7 @@ func parseQueryFiles(queryFiles []string, inferrer *pginfer.Inferrer) ([]codegen
 	return files, nil
 }
 
-func parseQueries(srcPath string, inferrer *pginfer.Inferrer) (codegen.QueryFile, error) {
+func parseQueries(srcPath string, inferrer Inferrer) (codegen.QueryFile, error) {
 	astFile, err := parser.ParseFile(gotok.NewFileSet(), srcPath, nil, 0)
 	if err != nil {
 		return codegen.QueryFile{}, fmt.Errorf("parse query file %q: %w", srcPath, err)
@@ -218,7 +258,7 @@ func parseQueries(srcPath string, inferrer *pginfer.Inferrer) (codegen.QueryFile
 	}
 
 	// Infer types.
-	queries := make([]pginfer.TypedQuery, 0, len(astFile.Queries))
+	queries := make([]codegen.TypedQuery, 0, len(astFile.Queries))
 	for _, srcQuery := range srcQueries {
 		typedQuery, err := inferrer.InferTypes(srcQuery)
 		if err != nil {

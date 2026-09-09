@@ -23,11 +23,11 @@ func (e EnumTypeDeclarer) DedupeKey() string {
 func (e EnumTypeDeclarer) Declare(string) (string, error) {
 	sb := &strings.Builder{}
 	// Doc string.
-	if e.enum.PgEnum.Name != "" {
+	if e.enum.SQLName != "" {
 		sb.WriteString("// ")
 		sb.WriteString(e.enum.Name)
 		sb.WriteString(" represents the Postgres enum ")
-		sb.WriteString(strconv.Quote(e.enum.PgEnum.Name))
+		sb.WriteString(strconv.Quote(e.enum.SQLName))
 		sb.WriteString(".\n")
 	}
 	// Type declaration.

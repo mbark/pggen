@@ -2,15 +2,15 @@ package golang
 
 import (
 	"fmt"
-	"github.com/mbark/pggen/internal/casing"
-	"github.com/mbark/pggen/internal/codegen"
-	"github.com/mbark/pggen/internal/codegen/golang/gotype"
-	"github.com/mbark/pggen/internal/gomod"
-	"github.com/mbark/pggen/internal/pginfer"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/mbark/pggen/internal/casing"
+	"github.com/mbark/pggen/internal/codegen"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
+	"github.com/mbark/pggen/internal/gomod"
 )
 
 // Templater creates query file templates.
@@ -151,7 +151,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 
 	// First pass: resolve all types and collect imports.
 	type queryData struct {
-		query   pginfer.TypedQuery
+		query   codegen.TypedQuery
 		doc     string
 		inputs  []gotype.Type
 		outputs []gotype.Type
@@ -179,7 +179,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 
 		inputTypes := make([]gotype.Type, len(query.Inputs))
 		for i, input := range query.Inputs {
-			goType, err := tm.resolver.Resolve(input.PgType, false, pkgPath)
+			goType, err := tm.resolver.Resolve(input.Type, false, pkgPath)
 			if err != nil {
 				return TemplatedFile{}, nil, nil, err
 			}
@@ -191,7 +191,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 
 		outputTypes := make([]gotype.Type, len(query.Outputs))
 		for i, out := range query.Outputs {
-			goType, err := tm.resolver.Resolve(out.PgType, out.Nullable, pkgPath)
+			goType, err := tm.resolver.Resolve(out.Type, out.Nullable, pkgPath)
 			if err != nil {
 				return TemplatedFile{}, nil, nil, err
 			}

@@ -34,7 +34,7 @@ func Generate(opts GenerateOptions, queryFiles []codegen.QueryFile) error {
 	caser.AddAcronyms(opts.Acronyms)
 	templater := NewTemplater(TemplaterOpts{
 		Caser:            caser,
-		Resolver:         NewTypeResolver(caser, opts.TypeOverrides),
+		Resolver:         NewPgTypeResolver(caser, opts.TypeOverrides),
 		Pkg:              pkgName,
 		InlineParamCount: opts.InlineParamCount,
 	})

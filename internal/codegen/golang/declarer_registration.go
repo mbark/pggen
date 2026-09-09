@@ -53,19 +53,19 @@ func (t TypeRegistrationDeclarer) Declare(string) (string, error) {
 func collectPgTypeNames(typ gotype.Type, names map[string]struct{}) {
 	switch typ := gotype.UnwrapNestedType(typ).(type) {
 	case *gotype.CompositeType:
-		if typ.PgComposite.Name != "" {
-			names[typ.PgComposite.Name] = struct{}{}
+		if typ.SQLName != "" {
+			names[typ.SQLName] = struct{}{}
 		}
 		for _, fieldType := range typ.FieldTypes {
 			collectPgTypeNames(fieldType, names)
 		}
 	case *gotype.EnumType:
-		if typ.PgEnum.Name != "" {
-			names[typ.PgEnum.Name] = struct{}{}
+		if typ.SQLName != "" {
+			names[typ.SQLName] = struct{}{}
 		}
 	case *gotype.ArrayType:
-		if typ.PgArray.Name != "" {
-			names[typ.PgArray.Name] = struct{}{}
+		if typ.SQLName != "" {
+			names[typ.SQLName] = struct{}{}
 		}
 		collectPgTypeNames(typ.Elem, names)
 	}
