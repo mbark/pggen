@@ -27,6 +27,10 @@ import (
 
 const defaultTimeout = 10 * time.Second
 
+// describeParamPrefix names the substitute parameters that inference binds.
+// See describe for why the query's own names cannot be used.
+const describeParamPrefix = "pggen_param_"
+
 // Inferrer infers types by running DESCRIBE on a live ClickHouse.
 type Inferrer struct {
 	conn     driver.Conn
@@ -107,13 +111,26 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 func (inf *Inferrer) describe(ctx context.Context, sql string, params []ch.Param) ([]codegen.OutputColumn, error) {
 	// DESCRIBE parses the query, so every parameter must have a value even
 	// though none of them can affect the result columns.
+	//
+	// The values travel as server-side parameters, which ClickHouse keeps in
+	// the same map as query settings, so a parameter named after a setting —
+	// `limit` and `offset` are both settings — poisons the request. Describing
+	// a renamed copy of the query sidesteps the whole namespace; DESCRIBE
+	// reports the same columns either way, since it reads the parameters'
+	// types and not their names.
 	args := make([]any, 0, len(params))
-	for _, p := range params {
+	names := make(map[string]string, len(params))
+	for i, p := range params {
 		lit, err := ch.ZeroLiteral(p.Type)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, clickhouse.Named(p.Name, lit))
+		names[p.Name] = fmt.Sprintf("%s%d", describeParamPrefix, i)
+		args = append(args, clickhouse.Named(names[p.Name], lit))
+	}
+	sql, err := ch.RenameParams(sql, func(name string) string { return names[name] })
+	if err != nil {
+		return nil, err
 	}
 	if len(inf.settings) > 0 {
 		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(inf.settings))

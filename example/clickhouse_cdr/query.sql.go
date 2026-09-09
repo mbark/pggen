@@ -29,6 +29,19 @@ type Querier interface {
 	ListProviders(ctx context.Context) ([]string, error)
 
 	InsertCDR(ctx context.Context, params InsertCDRParams) error
+
+	// Two queries share one row struct through output=. The struct is declared
+	// once, and chgen checks the two agree on every column before sharing it.
+	FindChargesByProvider(ctx context.Context, provider string) ([]ChargeRow, error)
+
+	// The same shape over a different filter. end_date is Nullable here too, so
+	// the shared struct keeps the pointer.
+	FindChargesByLabel(ctx context.Context, label string) ([]ChargeRow, error)
+
+	// A parameter named after a ClickHouse setting. Inference sends parameters as
+	// settings, so it has to rename them to describe the query; see
+	// ch.RenameParams.
+	ListCDRsPaged(ctx context.Context, params ListCDRsPagedParams) ([]ListCDRsPagedRow, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -52,6 +65,12 @@ type genericConn interface {
 // a clickhouse.Conn.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
+}
+
+type ChargeRow struct {
+	ANum    string          `ch:"a_num"    json:"a_num"`
+	Charge  decimal.Decimal `ch:"charge"   json:"charge"`
+	LastEnd *time.Time      `ch:"last_end" json:"last_end"`
 }
 
 const findDataUsageSQL = `SELECT
@@ -222,4 +241,77 @@ func (q *DBQuerier) InsertCDR(ctx context.Context, params InsertCDRParams) error
 		return fmt.Errorf("exec query InsertCDR: %w", err)
 	}
 	return nil
+}
+
+const findChargesByProviderSQL = `SELECT
+    a_num,
+    sum(charge) AS charge,
+    max(end_date) AS last_end
+FROM cdr
+WHERE provider = cast(@provider AS String)
+GROUP BY a_num
+ORDER BY a_num;`
+
+// FindChargesByProvider implements Querier.FindChargesByProvider.
+func (q *DBQuerier) FindChargesByProvider(ctx context.Context, provider string) ([]ChargeRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "FindChargesByProvider")
+	var items []ChargeRow
+	if err := q.conn.Select(ctx, &items, findChargesByProviderSQL,
+		clickhouse.Named("provider", provider),
+	); err != nil {
+		return nil, fmt.Errorf("query FindChargesByProvider: %w", err)
+	}
+	return items, nil
+}
+
+const findChargesByLabelSQL = `SELECT
+    a_num,
+    sum(charge) AS charge,
+    max(end_date) AS last_end
+FROM cdr
+WHERE has(labels, cast(@label AS String))
+GROUP BY a_num
+ORDER BY a_num;`
+
+// FindChargesByLabel implements Querier.FindChargesByLabel.
+func (q *DBQuerier) FindChargesByLabel(ctx context.Context, label string) ([]ChargeRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "FindChargesByLabel")
+	var items []ChargeRow
+	if err := q.conn.Select(ctx, &items, findChargesByLabelSQL,
+		clickhouse.Named("label", label),
+	); err != nil {
+		return nil, fmt.Errorf("query FindChargesByLabel: %w", err)
+	}
+	return items, nil
+}
+
+const listCDRsPagedSQL = `SELECT a_num, units
+FROM cdr
+WHERE provider = cast(@provider AS String)
+ORDER BY a_num, start_date
+LIMIT cast(@limit AS UInt32) OFFSET cast(@offset AS UInt32);`
+
+type ListCDRsPagedParams struct {
+	Provider string `json:"provider"`
+	Limit    uint32 `json:"limit"`
+	Offset   uint32 `json:"offset"`
+}
+
+type ListCDRsPagedRow struct {
+	ANum  string `ch:"a_num" json:"a_num"`
+	Units int64  `ch:"units" json:"units"`
+}
+
+// ListCDRsPaged implements Querier.ListCDRsPaged.
+func (q *DBQuerier) ListCDRsPaged(ctx context.Context, params ListCDRsPagedParams) ([]ListCDRsPagedRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "ListCDRsPaged")
+	var items []ListCDRsPagedRow
+	if err := q.conn.Select(ctx, &items, listCDRsPagedSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("limit", params.Limit),
+		clickhouse.Named("offset", params.Offset),
+	); err != nil {
+		return nil, fmt.Errorf("query ListCDRsPaged: %w", err)
+	}
+	return items, nil
 }

@@ -565,21 +565,7 @@ func (tq TemplatedQuery) EmitRowStruct() string {
 		sb.WriteString("\n\ntype ")
 		sb.WriteString(tq.Name)
 		sb.WriteString("Row struct {\n")
-		maxNameLen, maxTypeLen := getLongestOutput(outs)
-		for _, out := range outs {
-			// Name
-			sb.WriteString("\t")
-			sb.WriteString(out.UpperName)
-			// Type
-			sb.WriteString(strings.Repeat(" ", maxNameLen-len(out.UpperName)))
-			sb.WriteString(out.QualType)
-			// JSON struct tag
-			sb.WriteString(strings.Repeat(" ", maxTypeLen-len(out.QualType)))
-			sb.WriteString("`json:")
-			sb.WriteString(strconv.Quote(out.PgName))
-			sb.WriteString("`")
-			sb.WriteRune('\n')
-		}
+		writeRowStructFields(sb, outs, codegen.DialectPostgres)
 		sb.WriteString("}")
 		return sb.String()
 	default:

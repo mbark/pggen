@@ -1,6 +1,7 @@
 package ch
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -224,5 +225,63 @@ func TestRewriteParams_errors(t *testing.T) {
 				t.Errorf("RewriteParams(%q) succeeded; want an error", sql)
 			}
 		})
+	}
+}
+
+func TestRenameParams(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{
+			name: "renames every occurrence",
+			sql:  "SELECT * FROM t WHERE a = {x:String} OR b = {x:String} LIMIT {limit:UInt32}",
+			want: "SELECT * FROM t WHERE a = {p0:String} OR b = {p0:String} LIMIT {p1:UInt32}",
+		},
+		{
+			name: "keeps the declared type",
+			sql:  "SELECT {a:Array(String)}, {b:Decimal(18, 6)}",
+			want: "SELECT {p0:Array(String)}, {p1:Decimal(18, 6)}",
+		},
+		{
+			name: "leaves braces inside literals and comments alone",
+			sql:  "SELECT '{x:String}' -- {y:String}\n, {z:String}",
+			want: "SELECT '{x:String}' -- {y:String}\n, {p0:String}",
+		},
+		{
+			name: "no params",
+			sql:  "SELECT 1",
+			want: "SELECT 1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Number the parameters in order of first appearance, the way
+			// chinfer does.
+			params, err := ScanParams(tt.sql)
+			if err != nil {
+				t.Fatalf("ScanParams: %v", err)
+			}
+			index := make(map[string]string, len(params))
+			for i, p := range params {
+				index[p.Name] = fmt.Sprintf("p%d", i)
+			}
+
+			got, err := RenameParams(tt.sql, func(name string) string { return index[name] })
+			if err != nil {
+				t.Fatalf("RenameParams: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("RenameParams mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRenameParams_reportsBadParam(t *testing.T) {
+	_, err := RenameParams("SELECT {x}", func(string) string { return "p0" })
+	if err == nil || !strings.Contains(err.Error(), "missing its type") {
+		t.Errorf("RenameParams error = %v, want it to mention the missing type", err)
 	}
 }

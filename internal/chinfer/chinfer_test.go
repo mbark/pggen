@@ -252,6 +252,59 @@ func TestInferrer_leftJoinNullability(t *testing.T) {
 	})
 }
 
+// TestInferrer_settingNamedParams pins down a collision that only shows up at
+// inference. DESCRIBE needs a value for every parameter, and those travel as
+// server-side parameters, which ClickHouse keeps in the same map as query
+// settings. `limit` and `offset` are both real settings, so a query with a
+// parameter of either name used to be rejected with "Cannot parse quoted
+// string" — and so was every other query in the same file, since the collision
+// happens while the settings are read, before the SQL is parsed. Inference
+// therefore describes a renamed copy of the query.
+//
+// Generated code is unaffected either way: it binds client-side through
+// cast(@name AS Type), so the query keeps its own parameter names.
+func TestInferrer_settingNamedParams(t *testing.T) {
+	inf := newInferrer(t)
+
+	query := &ast.SourceQuery{
+		Name: "PagedCDRs",
+		PreparedSQL: texts.Dedent(`
+			SELECT a_num, units
+			FROM cdr
+			WHERE provider IN {providers:Array(String)}
+			ORDER BY a_num
+			LIMIT {limit:UInt32} OFFSET {offset:UInt32}`),
+		ResultKind: ast.ResultKindMany,
+	}
+
+	got, err := inf.InferTypes(query)
+	if err != nil {
+		t.Fatalf("InferTypes returned error: %v", err)
+	}
+
+	wantInputs := []codegen.InputParam{
+		{PgName: "providers", Type: ch.Array{Elem: ch.Scalar{Name: "String"}}},
+		{PgName: "limit", Type: ch.Scalar{Name: "UInt32"}},
+		{PgName: "offset", Type: ch.Scalar{Name: "UInt32"}},
+	}
+	if diff := cmp.Diff(wantInputs, got.Inputs); diff != "" {
+		t.Errorf("inputs mismatch (-want +got):\n%s", diff)
+	}
+	wantOutputs := []codegen.OutputColumn{
+		{PgName: "a_num", Type: ch.Scalar{Name: "String"}},
+		{PgName: "units", Type: ch.Scalar{Name: "Int64"}},
+	}
+	if diff := cmp.Diff(wantOutputs, got.Outputs); diff != "" {
+		t.Errorf("outputs mismatch (-want +got):\n%s", diff)
+	}
+
+	// The renaming is confined to the DESCRIBE; what the generator emits still
+	// carries the query's own parameter names.
+	if !strings.Contains(got.PreparedSQL, "{limit:UInt32}") {
+		t.Errorf("PreparedSQL lost the query's own parameter name:\n%s", got.PreparedSQL)
+	}
+}
+
 func TestInferrer_InferTypes_errors(t *testing.T) {
 	inf := newInferrer(t)
 	tests := []struct {

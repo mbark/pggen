@@ -46,3 +46,37 @@ VALUES (
     {metadata:Map(String, String)}, {subscription_id:UUID},
     {customer_id:Nullable(UUID)}, {premium:Bool}
 );
+
+-- Two queries share one row struct through output=. The struct is declared
+-- once, and chgen checks the two agree on every column before sharing it.
+-- name: FindChargesByProvider :many output=ChargeRow
+SELECT
+    a_num,
+    sum(charge) AS charge,
+    max(end_date) AS last_end
+FROM cdr
+WHERE provider = {provider:String}
+GROUP BY a_num
+ORDER BY a_num;
+
+-- The same shape over a different filter. end_date is Nullable here too, so
+-- the shared struct keeps the pointer.
+-- name: FindChargesByLabel :many output=ChargeRow
+SELECT
+    a_num,
+    sum(charge) AS charge,
+    max(end_date) AS last_end
+FROM cdr
+WHERE has(labels, {label:String})
+GROUP BY a_num
+ORDER BY a_num;
+
+-- A parameter named after a ClickHouse setting. Inference sends parameters as
+-- settings, so it has to rename them to describe the query; see
+-- ch.RenameParams.
+-- name: ListCDRsPaged :many
+SELECT a_num, units
+FROM cdr
+WHERE provider = {provider:String}
+ORDER BY a_num, start_date
+LIMIT {limit:UInt32} OFFSET {offset:UInt32};

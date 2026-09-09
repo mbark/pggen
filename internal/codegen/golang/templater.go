@@ -195,7 +195,8 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 		for i, input := range query.Inputs {
 			goType, err := tm.resolver.Resolve(input.Type, false, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, nil, err
+				return TemplatedFile{}, nil, nil, fmt.Errorf(
+					"query %s, parameter %s: %w", query.Name, input.PgName, err)
 			}
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
@@ -207,7 +208,8 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 		for i, out := range query.Outputs {
 			goType, err := tm.resolver.Resolve(out.Type, out.Nullable, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, nil, err
+				return TemplatedFile{}, nil, nil, fmt.Errorf(
+					"query %s, output column %s: %w", query.Name, out.PgName, err)
 			}
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
@@ -499,7 +501,7 @@ func (tm Templater) buildSharedRowDeclarers(files []TemplatedFile) ([]Declarer, 
 			merged[i] = col
 		}
 
-		declarers = append(declarers, NewSharedRowDeclarer(outputType, merged))
+		declarers = append(declarers, NewSharedRowDeclarer(outputType, merged, tm.dialect))
 	}
 
 	return declarers, nil

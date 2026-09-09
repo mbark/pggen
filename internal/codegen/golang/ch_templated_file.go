@@ -7,6 +7,7 @@ import (
 
 	"github.com/mbark/pggen/internal/ast"
 	"github.com/mbark/pggen/internal/ch"
+	"github.com/mbark/pggen/internal/codegen"
 )
 
 // The emitters in this file back query_clickhouse.gotemplate. They are named
@@ -116,31 +117,7 @@ func (tq TemplatedQuery) EmitChRowStruct() string {
 	sb.WriteString("\n\ntype ")
 	sb.WriteString(tq.Name)
 	sb.WriteString("Row struct {\n")
-
-	maxNameLen, maxTypeLen := getLongestOutput(outs)
-	maxTagLen := 0
-	for _, out := range outs {
-		if n := len(chTag(out.PgName)); n > maxTagLen {
-			maxTagLen = n
-		}
-	}
-	maxTagLen++ // 1 space to separate the ch tag from the json tag
-
-	for _, out := range outs {
-		sb.WriteString("\t")
-		sb.WriteString(out.UpperName)
-		sb.WriteString(strings.Repeat(" ", maxNameLen-len(out.UpperName)))
-		sb.WriteString(out.QualType)
-		sb.WriteString(strings.Repeat(" ", maxTypeLen-len(out.QualType)))
-		tag := chTag(out.PgName)
-		sb.WriteString("`")
-		sb.WriteString(tag)
-		sb.WriteString(strings.Repeat(" ", maxTagLen-len(tag)))
-		sb.WriteString("json:")
-		sb.WriteString(strconv.Quote(out.PgName))
-		sb.WriteString("`")
-		sb.WriteRune('\n')
-	}
+	writeRowStructFields(sb, outs, codegen.DialectClickHouse)
 	sb.WriteString("}")
 	return sb.String()
 }

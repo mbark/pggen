@@ -118,6 +118,42 @@ func TestQuerier(t *testing.T) {
 		assert.Equal(t, []string{"tele2", "telia"}, got)
 	})
 
+	// A shared output= struct is emitted by a different code path than a
+	// per-query row struct, and clickhouse-go binds columns to fields by ch
+	// tag, so scanning into one is the only thing that proves it has them.
+	t.Run("two queries share one row struct", func(t *testing.T) {
+		byProvider, err := q.FindChargesByProvider(ctx, "tele2")
+		require.NoError(t, err)
+		require.Len(t, byProvider, 1)
+		assert.Equal(t, "46701234567", byProvider[0].ANum)
+		assert.True(t, decimal.RequireFromString("3").Equal(byProvider[0].Charge),
+			"summed charge should be 3, got %s", byProvider[0].Charge)
+		assert.Nil(t, byProvider[0].LastEnd, "every end_date was inserted as NULL")
+
+		byLabel, err := q.FindChargesByLabel(ctx, "a")
+		require.NoError(t, err)
+		require.Len(t, byLabel, 2)
+
+		// The same Go type backs both, which is the point of output=:
+		// concatenating them only compiles if they share it.
+		all := append(append([]ChargeRow{}, byProvider...), byLabel...)
+		assert.Len(t, all, 3)
+	})
+
+	// limit and offset are ClickHouse setting names. Inference has to rename
+	// them to describe the query; the generated code keeps the query's own
+	// names because it binds client-side.
+	t.Run("parameters named after ClickHouse settings", func(t *testing.T) {
+		got, err := q.ListCDRsPaged(ctx, ListCDRsPagedParams{
+			Provider: "tele2",
+			Limit:    1,
+			Offset:   1,
+		})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, int64(2048), got[0].Units, "OFFSET 1 should skip the first row")
+	})
+
 	t.Run("the querier satisfies Querier", func(t *testing.T) {
 		var _ Querier = q
 	})

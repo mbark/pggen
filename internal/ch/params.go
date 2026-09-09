@@ -145,3 +145,35 @@ func RewriteParams(sql string) (string, error) {
 	}
 	return sb.String(), nil
 }
+
+// RenameParams rewrites each {name:Type} to {rename(name):Type}.
+//
+// It exists because ClickHouse carries server-side query parameters in the
+// same map as query settings, and `limit` and `offset` are both real settings.
+// A parameter named after one of them makes the server reject the query with
+// "Cannot parse quoted string" — and it does so even for a query that never
+// mentions the parameter, since the collision happens while the settings are
+// read, before the SQL is parsed.
+//
+// Only inference sends parameters that way, so only inference needs this: it
+// describes a copy of the query whose parameters are renamed out of the
+// settings namespace. Generated code is unaffected, because it binds
+// client-side through cast(@name AS Type); see RewriteParams.
+func RenameParams(sql string, rename func(string) string) (string, error) {
+	sb := &strings.Builder{}
+	sb.Grow(len(sql))
+	err := scanSQL(sql,
+		func(text string) { sb.WriteString(text) },
+		func(p Param) error {
+			sb.WriteString("{")
+			sb.WriteString(rename(p.Name))
+			sb.WriteString(":")
+			sb.WriteString(p.Type.String())
+			sb.WriteString("}")
+			return nil
+		})
+	if err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
