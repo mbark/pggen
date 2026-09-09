@@ -79,6 +79,62 @@ How to use pggen in three steps:
     ```
 [./example/composite/query.sql.go]: ./example/composite/query.sql.go
 
+## ClickHouse
+
+The same tool, pointed at ClickHouse, ships as `chgen`. Query files use the same
+`-- name:` annotations and the same pragmas; the difference is how inputs are
+declared. ClickHouse spells a parameter `{name:Type}` with the type written by
+hand, so there is no `pggen.arg()` and no type to infer — and a query file stays
+something you can paste straight into `clickhouse-client`.
+
+```sql
+-- name: FindDataUsage :many
+SELECT a_num AS msisdn, sum(units) AS data_bytes
+FROM cdr
+WHERE a_num IN {msisdns:Array(String)}
+  AND start_date >= {from:DateTime}
+GROUP BY a_num;
+```
+
+```bash
+chgen gen go \
+    --schema-glob schema.sql \
+    --query-glob 'cdr/*.sql'
+```
+
+```go
+type FindDataUsageParams struct {
+    Msisdns []string  `json:"msisdns"`
+    From    time.Time `json:"from"`
+}
+
+type FindDataUsageRow struct {
+    Msisdn    string `ch:"msisdn"     json:"msisdn"`
+    DataBytes int64  `ch:"data_bytes" json:"data_bytes"`
+}
+
+func (q *DBQuerier) FindDataUsage(
+    ctx context.Context,
+    params FindDataUsageParams,
+) ([]FindDataUsageRow, error) {
+    /* omitted */
+}
+```
+
+Two things differ from the Postgres output, both because ClickHouse does:
+
+- **Nullability is exact, not guessed.** ClickHouse puts it in the type —
+  `Nullable(String)` — so `chgen` reads it off `DESCRIBE` rather than inferring
+  it from the query plan. Watch out for one asymmetry with Postgres: with
+  `join_use_nulls` off, the default, a `LEFT JOIN` does *not* make the right
+  side's columns nullable, because unmatched rows get type defaults instead of
+  NULL.
+- **There is no batch interface.** ClickHouse has no query pipelining, so there
+  are no `XBatch`/`XScan` methods. A `:many` query is a single `conn.Select`.
+
+`chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
+supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.
+
 ## Pitch
 
 Why should you use `pggen` instead of the [myriad] of Go SQL bindings?

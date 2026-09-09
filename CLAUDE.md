@@ -14,15 +14,21 @@ point at upstream). Fork-specific query pragmas: `output=<RowType>` (share one r
 across queries) and `paginate=<spec>` with `-- sort:` blocks (keyset pagination fan-out) —
 see README "Features" and `internal/parser/paginate.go`.
 
+It also ships **`chgen`**, the same tool pointed at ClickHouse: same query file format,
+same pragmas, a different database and driver. The two are separate binaries so each
+keeps its own flags and neither grows a dialect switch. `paginate=` is rejected for
+ClickHouse for now.
+
 ## Commands
 
 Tooling is pinned in `mise.toml`; `mise install` gets the same Go and golangci-lint that CI
 uses. Docker is also required.
 
 ```shell
-mise run start              # long-lived Postgres on :5555 (docker compose) — needed by unit tests
-mise run stop
-mise run psql               # psql into that container
+mise run start              # long-lived Postgres on :5555 and ClickHouse on :9010
+mise run stop               # (docker compose) — both needed by unit tests
+mise run psql               # psql into the Postgres container
+mise run clickhouse-client  # clickhouse-client into the ClickHouse container
 mise run build              # go build ./...
 mise run test               # go test ./... (depends on start)
 mise run acceptance-test    # go test --tags=acceptance_test ./...
@@ -30,6 +36,9 @@ mise run update-acceptance-test  # rewrite committed example output
 mise run lint               # golangci-lint run
 mise run all                # lint + test + acceptance-test
 ```
+
+ClickHouse uses 9010/8124 rather than the default 9000/8123 so this container can
+coexist with one another project may already have running on the usual ports.
 
 Single test: `go test ./internal/pginfer/ -run TestInferrer_InferTypes` (start Postgres
 first if the package touches the database). Acceptance subtests are named after the example
@@ -47,11 +56,14 @@ the Go client and will not find it otherwise.
 - **Unit** — pure logic, e.g. `internal/casing/casing_test.go`. `mise run test`.
 - **Integration** — talks to the shared Postgres on :5555. `internal/pgtest` creates a
   randomly named schema per test (`pggen_test_<n>`, logged in the test output) so tests are
-  isolated without a container per test. `mise run test`.
+  isolated without a container per test. `mise run test`. The ClickHouse equivalent is
+  `internal/chtest`, which creates a randomly named *database* per test — ClickHouse has no
+  `search_path`, so a schema won't do.
 - **Acceptance** — `//go:build acceptance_test`. `example/acceptance_test.go` compiles the
   CLI, spins up its own throwaway Postgres via `pgdocker`, regenerates every example listed
   in its table, and asserts no git diff. Adding an example means adding a row to that table
-  *and* committing the generated output.
+  *and* committing the generated output. `TestClickHouseExamples` in the same file is the
+  chgen counterpart, backed by `chdocker`.
 - **Per-example codegen tests** — `example/*/codegen_test.go` call `pggen.Generate` directly
   and diff against the checked-in `query.sql.go`; `example/*/query.sql_test.go` execute the
   generated queries. These are the first place to look when debugging codegen or generated
@@ -81,7 +93,21 @@ Things that are easy to miss:
   **leader file** (lexicographically first source path) and emits every declarer there, so
   changing the set of query files can move declarations between generated files.
 - **Type mapping** lives in `internal/codegen/golang/type_resolver.go` and
-  `gotype/known_types.go`; `--go-type pg_type=go.pkg/Type` overrides it.
+  `gotype/known_types.go`; `--go-type pg_type=go.pkg/Type` overrides it. ClickHouse has its
+  own pair, `ch_type_resolver.go` and `ch_known_types.go`, keyed by the canonical type name
+  rather than an OID.
+- **ClickHouse specifics.** `internal/ch` is a pure, database-free model of the ClickHouse
+  type system plus a parser for type names; `internal/chinfer` runs `DESCRIBE` to learn a
+  query's result columns. Two behaviours are easy to trip over:
+  - The emitted SQL rewrites `{name:Type}` to `cast(@name AS Type)`
+    (`ch.RewriteParams`). Server-side parameters travel as text and clickhouse-go renders
+    `time.Time`, `uuid.UUID` and `decimal.Decimal` in forms the server rejects; the `@name`
+    form uses client-side binding, which gets them right. Query files keep the native
+    syntax, so they stay runnable in `clickhouse-client`.
+  - With `join_use_nulls` off (the default), a LEFT JOIN does **not** make the right side's
+    columns `Nullable` — unmatched rows get type defaults like `''` and `0`. Inference is
+    only correct under the settings the application connects with; pass them with
+    `chinfer.WithSettings`.
 - The parser is hand-written (`internal/scanner`, `internal/token`, `internal/parser`),
   modelled on go/parser — it splits SQL into named queries by comment annotations, it does
   not understand SQL itself.
