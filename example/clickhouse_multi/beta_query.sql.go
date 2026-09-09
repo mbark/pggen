@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"time"
 )
 
 const sumByMSISDNSQL = `SELECT
@@ -24,6 +25,30 @@ func (q *DBQuerier) SumByMSISDN(ctx context.Context, msisdnA string) ([]UsageRow
 		clickhouse.Named("msisdn_a", msisdnA),
 	); err != nil {
 		return nil, fmt.Errorf("query SumByMSISDN: %w", err)
+	}
+	return items, nil
+}
+
+const findEndsByMSISDNSQL = `SELECT
+    ended_at,
+    tag_sets
+FROM call_record
+WHERE msisdn_a = cast(@msisdn_a AS String)
+ORDER BY units;`
+
+type FindEndsByMSISDNRow struct {
+	EndedAt *time.Time          `ch:"ended_at" json:"ended_at"`
+	TagSets []map[string]string `ch:"tag_sets" json:"tag_sets"`
+}
+
+// FindEndsByMSISDN implements Querier.FindEndsByMSISDN.
+func (q *DBQuerier) FindEndsByMSISDN(ctx context.Context, msisdnA string) ([]FindEndsByMSISDNRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "FindEndsByMSISDN")
+	var items []FindEndsByMSISDNRow
+	if err := q.conn.Select(ctx, &items, findEndsByMSISDNSQL,
+		clickhouse.Named("msisdn_a", msisdnA),
+	); err != nil {
+		return nil, fmt.Errorf("query FindEndsByMSISDN: %w", err)
 	}
 	return items, nil
 }

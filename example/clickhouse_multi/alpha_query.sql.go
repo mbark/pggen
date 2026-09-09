@@ -18,6 +18,12 @@ type Querier interface {
 
 	// Sums usage for one subscriber, sharing UsageRow across files.
 	SumByMSISDN(ctx context.Context, msisdnA string) ([]UsageRow, error)
+
+	// Returns the two columns whose Go types are built out of wrappers. A pointer
+	// reports no import of its own and a map reports none either — its key and
+	// value can come from different packages — so this file needs "time" from
+	// inside a *time.Time and nothing else brings it in.
+	FindEndsByMSISDN(ctx context.Context, msisdnA string) ([]FindEndsByMSISDNRow, error)
 }
 
 var _ Querier = &DBQuerier{}
