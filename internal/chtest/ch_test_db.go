@@ -18,6 +18,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/mbark/pggen/internal/chdocker"
 )
 
 // CleanupFunc drops the database and closes the connections.
@@ -40,10 +42,17 @@ func Options(database string) *clickhouse.Options {
 	}
 }
 
+// DSN returns the connection string for the local test ClickHouse, pointed at
+// database.
+func DSN(database string) string {
+	return fmt.Sprintf("clickhouse://%s:%s@%s/%s", User, Password, Addr, database)
+}
+
 // NewClickHouseDBString opens a connection to a randomly named, new database
 // and runs the statements in sql against it. Statements are separated by
-// semicolons: ClickHouse has no multi-statement Exec.
-func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, CleanupFunc) {
+// semicolons: ClickHouse has no multi-statement Exec. It also returns the DSN
+// for that database, for tests that drive pggen through its public API.
+func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, string, CleanupFunc) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -66,7 +75,7 @@ func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, CleanupFunc) 
 	if err != nil {
 		t.Fatalf("connect to new database %s: %s", database, err)
 	}
-	for _, stmt := range SplitStatements(sql) {
+	for _, stmt := range chdocker.SplitStatements(sql) {
 		if err := conn.Exec(ctx, stmt); err != nil {
 			t.Fatalf("run sql %q: %s", truncate(stmt), err)
 		}
@@ -85,12 +94,12 @@ func NewClickHouseDBString(t *testing.T, sql string) (driver.Conn, CleanupFunc) 
 			t.Errorf("close admin conn: %s", err)
 		}
 	}
-	return conn, cleanup
+	return conn, DSN(database), cleanup
 }
 
 // NewClickHouseDB opens a connection to a randomly named, new database and
 // runs all sqlFiles against it.
-func NewClickHouseDB(t *testing.T, sqlFiles []string) (driver.Conn, CleanupFunc) {
+func NewClickHouseDB(t *testing.T, sqlFiles []string) (driver.Conn, string, CleanupFunc) {
 	t.Helper()
 	sb := &strings.Builder{}
 	for _, file := range sqlFiles {
@@ -102,53 +111,6 @@ func NewClickHouseDB(t *testing.T, sqlFiles []string) (driver.Conn, CleanupFunc)
 		sb.WriteString(";\n")
 	}
 	return NewClickHouseDBString(t, sb.String())
-}
-
-// SplitStatements splits a SQL string on semicolons that are not inside a
-// string literal or a comment. ClickHouse executes one statement per call, so
-// schema files have to be taken apart before they can be run.
-func SplitStatements(sql string) []string {
-	var stmts []string
-	var sb strings.Builder
-	for i := 0; i < len(sql); i++ {
-		c := sql[i]
-		switch c {
-		case '\'', '`', '"':
-			quote := c
-			sb.WriteByte(c)
-			for i++; i < len(sql); i++ {
-				sb.WriteByte(sql[i])
-				if sql[i] == '\\' && i+1 < len(sql) {
-					i++
-					sb.WriteByte(sql[i])
-					continue
-				}
-				if sql[i] == quote {
-					break
-				}
-			}
-		case '-':
-			if i+1 < len(sql) && sql[i+1] == '-' {
-				for i < len(sql) && sql[i] != '\n' {
-					i++
-				}
-				sb.WriteByte('\n')
-			} else {
-				sb.WriteByte(c)
-			}
-		case ';':
-			if stmt := strings.TrimSpace(sb.String()); stmt != "" {
-				stmts = append(stmts, stmt)
-			}
-			sb.Reset()
-		default:
-			sb.WriteByte(c)
-		}
-	}
-	if stmt := strings.TrimSpace(sb.String()); stmt != "" {
-		stmts = append(stmts, stmt)
-	}
-	return stmts
 }
 
 func truncate(s string) string {

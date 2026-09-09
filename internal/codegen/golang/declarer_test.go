@@ -61,7 +61,7 @@ func TestDeclarers(t *testing.T) {
 					FieldTypes: []gotype.Type{
 						gotype.NewEnumType(
 							emptyPkgPath,
-							"device_type", []string{"ios", "mobile"},
+							"device_type", "device_type", "Postgres", []string{"ios", "mobile"},
 							caser,
 						),
 					},
@@ -97,7 +97,7 @@ func TestDeclarers(t *testing.T) {
 			name: "enum_escaping",
 			typ: gotype.NewEnumType(
 				emptyPkgPath,
-				"quoting", []string{"\"\n\t", "`\"`"},
+				"quoting", "quoting", "Postgres", []string{"\"\n\t", "`\"`"},
 				casing.NewCaser(),
 			),
 		},
@@ -105,7 +105,7 @@ func TestDeclarers(t *testing.T) {
 			name: "enum_simple",
 			typ: gotype.NewEnumType(
 				emptyPkgPath,
-				"device_type", []string{"ios", "mobile"},
+				"device_type", "device_type", "Postgres", []string{"ios", "mobile"},
 				caser,
 			),
 		},

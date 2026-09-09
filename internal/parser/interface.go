@@ -45,6 +45,15 @@ func PostgresPlaceholder(_ string, ordinal int) string {
 	return "$" + strconv.Itoa(ordinal)
 }
 
+// ClickHousePlaceholder leaves a pggen.arg() reference exactly as written.
+//
+// ClickHouse query files declare their parameters natively, as {name:Type},
+// carrying a type pggen has no way to invent here. So this dialect rewrites
+// nothing, and Generate rejects pggen.arg() with an explanation instead.
+func ClickHousePlaceholder(name string, _ int) string {
+	return "pggen.arg('" + name + "')"
+}
+
 // A Mode value is a set of flags (or 0).
 // They control the amount of source code parsed and other optional parser
 // functionality.

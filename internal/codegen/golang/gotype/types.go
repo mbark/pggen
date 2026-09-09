@@ -28,6 +28,14 @@ type (
 		Elem    Type   // element type of the slice, like int for []int
 	}
 
+	// MapType is a Go map type. ClickHouse has Map(K, V); Postgres has no
+	// equivalent, so this is only produced by the ClickHouse resolver.
+	MapType struct {
+		SQLName string // name of the backing database map type, like Map(String, String)
+		Key     Type
+		Val     Type
+	}
+
 	// CompositeType is a struct type that represents a Postgres composite type.
 	CompositeType struct {
 		SQLName        string   // name of the backing database composite type
@@ -41,7 +49,10 @@ type (
 	// a Postgres enum.
 	EnumType struct {
 		SQLName string // name of the backing database enum type
-		Name    string // name of the unqualified Go type
+		// SQLKindName names the database in the doc comment, like "Postgres"
+		// or "ClickHouse".
+		SQLKindName string
+		Name        string // name of the unqualified Go type
 		// Labels of the Postgres enum formatted as Go identifiers ordered in the
 		// same order as in Postgres.
 		Labels []string
@@ -76,6 +87,11 @@ type (
 
 func (a *ArrayType) Import() string   { return a.Elem.Import() }
 func (a *ArrayType) BaseName() string { return "[]" + a.Elem.BaseName() }
+
+func (m *MapType) Import() string { return "" }
+func (m *MapType) BaseName() string {
+	return "map[" + m.Key.BaseName() + "]" + m.Val.BaseName()
+}
 
 func (c *CompositeType) Import() string   { return "" }
 func (c *CompositeType) BaseName() string { return c.Name }
@@ -121,6 +137,12 @@ func getTypePackage(typ Type) string {
 // aliases for resolving name collisions.
 func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
 	sb := &strings.Builder{}
+	// A map qualifies its key and value independently; they can come from
+	// different packages.
+	if mapType, ok := typ.(*MapType); ok {
+		return "map[" + QualifyType(mapType.Key, otherPkgPath, aliases...) + "]" +
+			QualifyType(mapType.Val, otherPkgPath, aliases...)
+	}
 	arrType, isArr := typ.(*ArrayType)
 	if isArr {
 		sb.WriteString("[]")
@@ -166,10 +188,13 @@ func NewArrayType(sqlName string, elemType Type) Type {
 	}
 }
 
-func NewEnumType(pkgPath, sqlName string, sqlLabels []string, caser casing.Caser) Type {
-	name := caser.ToUpperGoIdent(sqlName)
+// NewEnumType builds the Go type for a database enum. goNameSource is what the
+// Go type name is derived from, and sqlName is what the database calls the
+// type; they differ for ClickHouse, whose enums are anonymous.
+func NewEnumType(pkgPath, goNameSource, sqlName, sqlKindName string, sqlLabels []string, caser casing.Caser) Type {
+	name := caser.ToUpperGoIdent(goNameSource)
 	if name == "" {
-		name = ChooseFallbackName(sqlName, "UnnamedEnum")
+		name = ChooseFallbackName(goNameSource, "UnnamedEnum")
 	}
 	labels := make([]string, len(sqlLabels))
 	values := make([]string, len(sqlLabels))
@@ -182,10 +207,11 @@ func NewEnumType(pkgPath, sqlName string, sqlLabels []string, caser casing.Caser
 		values[i] = sqlLabels[i]
 	}
 	typ := &EnumType{
-		SQLName: sqlName,
-		Name:    name,
-		Labels:  labels,
-		Values:  values,
+		SQLName:     sqlName,
+		SQLKindName: sqlKindName,
+		Name:        name,
+		Labels:      labels,
+		Values:      values,
 	}
 	if pkgPath != "" {
 		return &ImportType{

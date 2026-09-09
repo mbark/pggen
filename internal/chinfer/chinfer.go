@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -59,7 +60,7 @@ func NewInferrer(conn driver.Conn, opts ...Option) *Inferrer {
 
 // InferTypes returns the typed form of query.
 func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, error) {
-	params, err := ScanParams(query.PreparedSQL)
+	params, err := ch.ScanParams(query.PreparedSQL)
 	if err != nil {
 		return codegen.TypedQuery{}, fmt.Errorf("query %s: %w", query.Name, err)
 	}
@@ -103,7 +104,7 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 
 // describe runs DESCRIBE on the query and reads the result column names and
 // types back out.
-func (inf *Inferrer) describe(ctx context.Context, sql string, params []Param) ([]codegen.OutputColumn, error) {
+func (inf *Inferrer) describe(ctx context.Context, sql string, params []ch.Param) ([]codegen.OutputColumn, error) {
 	// DESCRIBE parses the query, so every parameter must have a value even
 	// though none of them can affect the result columns.
 	args := make([]any, 0, len(params))
@@ -118,7 +119,9 @@ func (inf *Inferrer) describe(ctx context.Context, sql string, params []Param) (
 		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(inf.settings))
 	}
 
-	rows, err := inf.conn.Query(ctx, "DESCRIBE ("+sql+")", args...)
+	// DESCRIBE wraps the query in parentheses, where a trailing semicolon is a
+	// syntax error.
+	rows, err := inf.conn.Query(ctx, "DESCRIBE ("+strings.TrimRight(sql, "; \t\r\n")+")", args...)
 	if err != nil {
 		return nil, describeError(err)
 	}

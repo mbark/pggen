@@ -10,8 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/chdocker"
+	"github.com/mbark/pggen/internal/chinfer"
 	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/codegen/golang"
 	"github.com/mbark/pggen/internal/errs"
@@ -30,11 +34,11 @@ const (
 // Dialect is a supported database backend. It is orthogonal to Lang: Lang
 // picks the language of the generated code, Dialect picks the database the
 // queries run against and therefore how their types are inferred.
-type Dialect string
+type Dialect = codegen.Dialect
 
 const (
-	DialectPostgres   Dialect = "postgres"
-	DialectClickHouse Dialect = "clickhouse"
+	DialectPostgres   = codegen.DialectPostgres
+	DialectClickHouse = codegen.DialectClickHouse
 )
 
 // Inferrer turns a parsed query into a typed query by asking the database
@@ -114,7 +118,7 @@ func Generate(opts GenerateOptions) (mErr error) {
 	defer errs.Capture(&mErr, cleanup, "close database connection")
 
 	// Parse queries.
-	queryFiles, err := parseQueryFiles(opts.QueryFiles, inferrer)
+	queryFiles, err := parseQueryFiles(opts.QueryFiles, inferrer, opts.Dialect)
 	if err != nil {
 		return errEnricher(err)
 	}
@@ -129,6 +133,7 @@ func Generate(opts GenerateOptions) (mErr error) {
 	switch opts.Language {
 	case LangGo:
 		goOpts := golang.GenerateOptions{
+			Dialect:          opts.Dialect,
 			GoPkg:            opts.GoPackage,
 			OutputDir:        opts.OutputDir,
 			Acronyms:         opts.Acronyms,
@@ -155,10 +160,83 @@ func connectInferrer(ctx context.Context, opts GenerateOptions) (Inferrer, func(
 		}
 		return pginfer.NewInferrer(pgConn), errEnricher, cleanup, nil
 	case DialectClickHouse:
-		return nil, nil, nil, fmt.Errorf("dialect %q is not implemented yet", opts.Dialect)
+		conn, cleanup, err := connectClickHouse(ctx, opts)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("connect clickhouse: %w", err)
+		}
+		return chinfer.NewInferrer(conn), func(e error) error { return e }, cleanup, nil
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported dialect %q", opts.Dialect)
 	}
+}
+
+// connectClickHouse connects to ClickHouse using connString if given, or by
+// running a Docker ClickHouse container and connecting to that. Schema files
+// are loaded before any query is inferred.
+func connectClickHouse(ctx context.Context, opts GenerateOptions) (driver.Conn, func() error, error) {
+	connString := opts.ConnString
+	stop := func() error { return nil }
+	if connString == "" {
+		client, err := chdocker.Start(ctx, opts.SchemaFiles)
+		if err != nil {
+			return nil, nil, fmt.Errorf("start dockerized clickhouse: %w", err)
+		}
+		stop = func() error { return client.Stop(ctx) }
+		connString = client.ConnString()
+	}
+
+	chOpts, err := clickhouse.ParseDSN(connString)
+	if err != nil {
+		_ = stop()
+		return nil, nil, fmt.Errorf("parse clickhouse connection string: %w", err)
+	}
+	conn, err := clickhouse.Open(chOpts)
+	if err != nil {
+		_ = stop()
+		return nil, nil, fmt.Errorf("open clickhouse connection: %w", err)
+	}
+	if err := conn.Ping(ctx); err != nil {
+		_ = stop()
+		return nil, nil, fmt.Errorf("ping clickhouse: %w", err)
+	}
+
+	// With an external connection, load the schema files ourselves; the Docker
+	// path has already run them as init scripts.
+	if opts.ConnString != "" {
+		if err := loadClickHouseSchemas(ctx, conn, opts.SchemaFiles); err != nil {
+			_ = conn.Close()
+			return nil, nil, err
+		}
+	}
+
+	cleanup := func() error {
+		closeErr := conn.Close()
+		if stopErr := stop(); stopErr != nil {
+			return stopErr
+		}
+		return closeErr
+	}
+	return conn, cleanup, nil
+}
+
+// loadClickHouseSchemas runs each schema file against conn. ClickHouse runs
+// one statement per call, so the files are split on semicolons.
+func loadClickHouseSchemas(ctx context.Context, conn driver.Conn, schemaFiles []string) error {
+	for _, file := range schemaFiles {
+		if filepath.Ext(file) != ".sql" {
+			return fmt.Errorf("clickhouse schema file %s must be a .sql file", file)
+		}
+		bs, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read clickhouse schema file %s: %w", file, err)
+		}
+		for _, stmt := range chdocker.SplitStatements(string(bs)) {
+			if err := conn.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("run clickhouse schema file %s: %w", file, err)
+			}
+		}
+	}
+	return nil
 }
 
 // connectPostgres connects to postgres using connString if given or by
@@ -217,14 +295,14 @@ func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func
 	return pgConn, nopErrEnricher, nopCleanup, nil
 }
 
-func parseQueryFiles(queryFiles []string, inferrer Inferrer) ([]codegen.QueryFile, error) {
+func parseQueryFiles(queryFiles []string, inferrer Inferrer, dialect Dialect) ([]codegen.QueryFile, error) {
 	files := make([]codegen.QueryFile, len(queryFiles))
 	for i, file := range queryFiles {
 		srcPath, err := filepath.Abs(file)
 		if err != nil {
 			return nil, fmt.Errorf("resolve absolute path for %q: %w", file, err)
 		}
-		queryFile, err := parseQueries(srcPath, inferrer)
+		queryFile, err := parseQueries(srcPath, inferrer, dialect)
 		if err != nil {
 			return nil, fmt.Errorf("parse template query file %q: %w", file, err)
 		}
@@ -233,8 +311,12 @@ func parseQueryFiles(queryFiles []string, inferrer Inferrer) ([]codegen.QueryFil
 	return files, nil
 }
 
-func parseQueries(srcPath string, inferrer Inferrer) (codegen.QueryFile, error) {
-	astFile, err := parser.ParseFile(gotok.NewFileSet(), srcPath, nil, 0)
+func parseQueries(srcPath string, inferrer Inferrer, dialect Dialect) (codegen.QueryFile, error) {
+	placeholder := parser.PostgresPlaceholder
+	if dialect == DialectClickHouse {
+		placeholder = parser.ClickHousePlaceholder
+	}
+	astFile, err := parser.ParseFileDialect(gotok.NewFileSet(), srcPath, nil, 0, placeholder)
 	if err != nil {
 		return codegen.QueryFile{}, fmt.Errorf("parse query file %q: %w", srcPath, err)
 	}
@@ -249,6 +331,13 @@ func parseQueries(srcPath string, inferrer Inferrer) (codegen.QueryFile, error) 
 		case *ast.SourceQuery:
 			if _, ok := seenNames[query.Name]; ok {
 				return codegen.QueryFile{}, fmt.Errorf("duplicate query name %s", query.Name)
+			}
+			if dialect == DialectClickHouse && len(query.ParamNames) > 0 {
+				return codegen.QueryFile{}, fmt.Errorf(
+					"query %s uses pggen.arg(%q), which pggen does not support for ClickHouse; "+
+						"declare the parameter natively instead, like {%s:String}, "+
+						"since ClickHouse parameters carry their own type",
+					query.Name, query.ParamNames[0], query.ParamNames[0])
 			}
 			seenNames[query.Name] = struct{}{}
 			srcQueries = append(srcQueries, query)

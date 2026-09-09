@@ -1,3 +1,9 @@
+// Command chgen generates type-safe Go code from ClickHouse SQL queries.
+//
+// It is pggen's sibling: same query file format, same pragmas, same generated
+// shape, pointed at ClickHouse instead of Postgres. The two are separate
+// binaries rather than one with a flag because they target different
+// databases, different drivers, and different query syntax for parameters.
 package main
 
 import (
@@ -22,29 +28,40 @@ var (
 	commit  = "head"
 )
 
-var flagHelp = `pggen generates type-safe code from files containing Postgres queries by running
-the queries on Postgres to get type information.
+var flagHelp = `chgen generates type-safe code from files containing ClickHouse queries by
+asking ClickHouse to describe each query.
+
+Declare inputs with ClickHouse's own parameter syntax, {name:Type}, which means
+a query file is also a query you can paste into clickhouse-client:
+
+  -- name: FindUsage :many
+  SELECT a_num, sum(units) AS data_bytes
+  FROM cdr
+  WHERE a_num IN {msisdns:Array(String)}
+    AND start_date >= {from:DateTime}
+  GROUP BY a_num;
 
 EXAMPLES
-  # Generate code for a single query file using an existing postgres database.
-  pggen gen go --query-glob author/queries.sql --postgres-connection "user=postgres port=5555 dbname=pggen"
+  # Generate code for a single query file using an existing ClickHouse.
+  chgen gen go --query-glob cdr/queries.sql \
+      --clickhouse-connection "clickhouse://default:hunter2@localhost:9000/pggen"
 
-  # Generate code using Docker to create the postgres database with a schema 
-  # file. --schema-glob arg implies using Dockerized postgres.
-  pggen gen go --schema-glob author/schema.sql --query-glob author/queries.sql
+  # Generate code using Docker to create ClickHouse from a schema file.
+  # --schema-glob implies using Dockerized ClickHouse.
+  chgen gen go --schema-glob cdr/schema.sql --query-glob cdr/queries.sql
 
   # Generate code for all queries underneath a directory. Glob should be quoted
   # to prevent shell expansion.
-  pggen gen go --schema-glob author/schema.sql --query-glob 'author/**/*.sql'
+  chgen gen go --schema-glob cdr/schema.sql --query-glob 'cdr/**/*.sql'
 
   # Use custom acronym when converting from camel_case_api to camelCaseAPI.
-  pggen gen go --schema-glob schema.sql --query-glob query.sql --acronym api
+  chgen gen go --schema-glob schema.sql --query-glob query.sql --acronym api
 `
 
 func run() error {
 	rootFlagSet := flag.NewFlagSet("root", flag.ExitOnError)
 	rootCmd := &ffcli.Command{
-		ShortUsage: "pggen <subcommand> [options...]",
+		ShortUsage: "chgen <subcommand> [options...]",
 		LongHelp:   flagHelp,
 		FlagSet:    rootFlagSet,
 		Subcommands: []*ffcli.Command{
@@ -57,57 +74,53 @@ func run() error {
 		os.Exit(1)
 		return nil
 	}
-	if err := rootCmd.ParseAndRun(context.Background(), os.Args[1:]); err != nil {
-		return err
-	}
-	return nil
+	return rootCmd.ParseAndRun(context.Background(), os.Args[1:])
 }
 
 func newVersionCmd() *ffcli.Command {
-	cmd := &ffcli.Command{
+	return &ffcli.Command{
 		Name:       "version",
-		ShortUsage: "prints pggen version",
+		ShortUsage: "prints chgen version",
 		Exec: func(ctx context.Context, args []string) error {
-			fmt.Printf("pggen version %s, commit %s\n", version, commit)
+			fmt.Printf("chgen version %s, commit %s\n", version, commit)
 			return nil
 		},
 	}
-	return cmd
 }
 
 func newGenCmd() *ffcli.Command {
 	fset := flag.NewFlagSet("go", flag.ExitOnError)
 	outputDir := fset.String("output-dir", "",
 		"where to write generated code; defaults to same directory as query files")
-	postgresConn := fset.String("postgres-connection", "",
-		`optional connection string to a postgres database, like: `+
-			`"user=postgres host=localhost dbname=pggen"`)
+	clickhouseConn := fset.String("clickhouse-connection", "",
+		`optional connection string to a ClickHouse database, like: `+
+			`"clickhouse://default:hunter2@localhost:9000/pggen"`)
 	queryGlobs := flags.Strings(fset, "query-glob", nil,
 		"generate code for all SQL files that match glob, like 'queries/**/*.sql'")
 	schemaGlobs := flags.Strings(fset, "schema-glob", nil,
-		"create schema in Postgres from all sql, sql.gz, or shell "+
-			"scripts (*.sh) that match a glob, like 'migrations/*.sql'")
+		"create schema in ClickHouse from all sql files that match a glob, "+
+			"like 'migrations/*.sql'")
 	acronyms := flags.Strings(fset, "acronym", nil,
 		"lowercase acronym that should convert to all caps like 'api', "+
 			"or custom mapping like 'apis=APIs'")
 	goTypes := flags.Strings(fset, "go-type", nil,
-		"custom type mapping from Postgres to fully qualified Go type, "+
-			"like 'device_type=github.com/mbark/pggen.DeviceType'")
+		"custom type mapping from ClickHouse to fully qualified Go type, "+
+			"like 'UUID=github.com/gofrs/uuid.UUID'")
 	inlineParamCount := fset.Int("inline-param-count", 2,
 		"number of params (inclusive) to inline when calling querier methods; 0 always generates a struct")
+
 	goSubCmd := &ffcli.Command{
 		Name:       "go",
-		ShortUsage: "pggen gen go --query-glob glob [--schema-glob <glob>]... [flags]",
-		ShortHelp:  "generates go code for Postgres query files",
+		ShortUsage: "chgen gen go --query-glob glob [--schema-glob <glob>]... [flags]",
+		ShortHelp:  "generates go code for ClickHouse query files",
 		FlagSet:    fset,
 		LongHelp: flagHelp + "\n" + texts.Dedent(`
-			pggen uses the provided --postgres-connection to query the database. If not 
-			present, pggen creates a Docker container to query the database.
+			chgen uses the provided --clickhouse-connection to query the database. If not
+			present, chgen creates a Docker container to query the database.
 		`),
 		Exec: func(ctx context.Context, args []string) error {
-			// Preconditions.
 			if len(*queryGlobs) == 0 {
-				return fmt.Errorf("pggen gen go: at least one file in --query-glob must match")
+				return fmt.Errorf("chgen gen go: at least one file in --query-glob must match")
 			}
 			queries, err := paths.ExpandSortGlobs(*queryGlobs)
 			if err != nil {
@@ -117,6 +130,7 @@ func newGenCmd() *ffcli.Command {
 			if err != nil {
 				return err
 			}
+
 			// Deduce output directory.
 			outDir := *outputDir
 			if outDir == "" {
@@ -129,7 +143,6 @@ func newGenCmd() *ffcli.Command {
 					outDir = dir
 				}
 			}
-
 			outDir, _ = filepath.Abs(outDir)
 
 			// Parse two acronym formats: "--acronym api" and "--acronym oids=OIDs"
@@ -150,17 +163,16 @@ func newGenCmd() *ffcli.Command {
 			typeOverrides := make(map[string]string, len(*goTypes))
 			for _, typeAssoc := range *goTypes {
 				if strings.Count(typeAssoc, "=") != 1 {
-					return fmt.Errorf("--go-type must have format <pgType>=<goType>; got %s", typeAssoc)
+					return fmt.Errorf("--go-type must have format <chType>=<goType>; got %s", typeAssoc)
 				}
 				ss := strings.SplitN(typeAssoc, "=", 2)
 				typeOverrides[ss[0]] = ss[1]
 			}
 
-			// Codegen.
 			err = pggen.Generate(pggen.GenerateOptions{
 				Language:         pggen.LangGo,
-				Dialect:          pggen.DialectPostgres,
-				ConnString:       *postgresConn,
+				Dialect:          pggen.DialectClickHouse,
+				ConnString:       *clickhouseConn,
 				SchemaFiles:      schemas,
 				QueryFiles:       queries,
 				OutputDir:        outDir,
@@ -181,10 +193,11 @@ func newGenCmd() *ffcli.Command {
 			return nil
 		},
 	}
+
 	cmd := &ffcli.Command{
 		Name:        "gen",
-		ShortUsage:  "pggen gen (go|<lang>) [options...]",
-		ShortHelp:   "generates code in specific language for Postgres query files",
+		ShortUsage:  "chgen gen (go|<lang>) [options...]",
+		ShortHelp:   "generates code in specific language for ClickHouse query files",
 		FlagSet:     nil,
 		Subcommands: []*ffcli.Command{goSubCmd},
 	}

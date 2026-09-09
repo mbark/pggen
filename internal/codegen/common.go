@@ -11,6 +11,15 @@ import (
 	"github.com/mbark/pggen/internal/sqltype"
 )
 
+// Dialect is the database a set of queries runs against. It decides how types
+// are inferred and which driver the generated code is written against.
+type Dialect string
+
+const (
+	DialectPostgres   Dialect = "postgres"
+	DialectClickHouse Dialect = "clickhouse"
+)
+
 // QueryFile represents all SQL queries from a single file.
 type QueryFile struct {
 	SourcePath string       // absolute path to the source SQL query file

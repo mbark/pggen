@@ -1,4 +1,4 @@
-package chtest
+package chdocker
 
 import (
 	"testing"

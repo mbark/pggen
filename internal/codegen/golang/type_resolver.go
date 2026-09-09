@@ -105,7 +105,7 @@ func (tr PgTypeResolver) Resolve(t sqltype.Type, nullable bool, pkgPath string) 
 		}
 		return gotype.NewArrayType(pgt.Name, elemType), nil
 	case pg.EnumType:
-		enum := gotype.NewEnumType(pkgPath, pgt.Name, pgt.Labels, tr.caser)
+		enum := gotype.NewEnumType(pkgPath, pgt.Name, pgt.Name, "Postgres", pgt.Labels, tr.caser)
 		if nullable {
 			return &gotype.PointerType{Elem: enum}, nil
 		}

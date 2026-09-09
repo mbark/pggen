@@ -19,6 +19,7 @@ type TemplatedPackage struct {
 // TemplatedFile is the Go version of a SQL query file with all information
 // needed to execute the codegen template.
 type TemplatedFile struct {
+	Dialect    codegen.Dialect  // the database the generated code talks to
 	Pkg        TemplatedPackage // the parent package containing this file
 	PkgPath    string           // full package path, like "github.com/foo/bar"
 	GoPkg      string           // the name of the Go package to use for the "package foo" declaration
@@ -148,6 +149,7 @@ func (pg PaginateGroup) EmitInterfaceMethod() (string, error) {
 // TemplatedQuery is a query with all information required to execute the
 // codegen template.
 type TemplatedQuery struct {
+	Dialect          codegen.Dialect   // the database the generated code talks to
 	Name             string            // name of the query, from the comment preceding the query
 	SQLVarName       string            // name of the string variable containing the SQL
 	ResultKind       ast.ResultKind    // kind of result: :one, :many, or :exec
@@ -247,6 +249,9 @@ func (tq TemplatedQuery) rowTypeName() string {
 }
 
 func (tf TemplatedFile) needsPgconnImport() bool {
+	if tf.Dialect == codegen.DialectClickHouse {
+		return false
+	}
 	if tf.IsLeader {
 		// Leader files define genericConn.Exec which returns pgconn.CommandTag.
 		return true

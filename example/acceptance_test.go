@@ -7,7 +7,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/mbark/pggen/internal/chdocker"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgdocker"
 	"math/rand"
@@ -305,26 +307,89 @@ func runPggen(t *testing.T, pggen string, args ...string) string {
 	return pggen
 }
 
-func compilePggen(t *testing.T) string {
+func compilePggen(t *testing.T) string { return compileBinary(t, "pggen") }
+
+func compileBinary(t *testing.T, name string) string {
 	tempDir := t.TempDir()
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("lookup go path: %s", err)
 	}
-	pggen := filepath.Join(tempDir, "pggen")
+	bin := filepath.Join(tempDir, name)
 	cmd := exec.Cmd{
 		Path: goBin,
-		Args: []string{goBin, "build", "-o", pggen, "./cmd/pggen"},
+		Args: []string{goBin, "build", "-o", bin, "./cmd/" + name},
 		Env:  os.Environ(),
 		Dir:  projDir,
 	}
-	t.Log("compiling pggen")
+	t.Log("compiling " + name)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Log("go build output:\n" + string(bytes.TrimSpace(output)))
-		t.Fatalf("compile pggen: %s", err)
+		t.Fatalf("compile %s: %s", name, err)
 	}
-	return pggen
+	return bin
+}
+
+// TestClickHouseExamples is the chgen counterpart of TestExamples: it
+// regenerates each ClickHouse example against a throwaway ClickHouse and
+// asserts the committed output still matches.
+func TestClickHouseExamples(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "example/clickhouse_cdr",
+			args: []string{
+				"--schema-glob", "example/clickhouse_cdr/schema.sql",
+				"--query-glob", "example/clickhouse_cdr/query.sql",
+			},
+		},
+	}
+	if *update {
+		t.Log("updating integration test generated files")
+	}
+	chgen := compileBinary(t, "chgen")
+
+	// One container for every test; each test gets its own database in it.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	docker, err := chdocker.Start(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errs.CaptureT(t, func() error { return docker.Stop(ctx) }, "stop docker")
+	mainConnStr := docker.ConnString()
+	t.Log("started dockerized clickhouse: " + mainConnStr)
+
+	opts, err := clickhouse.ParseDSN(mainConnStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := clickhouse.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errs.CaptureT(t, conn.Close, "close conn")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dbName := "chgen_example_" + strconv.FormatInt(int64(rand.Int31()), 36)
+			if err := conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
+				t.Fatal(err)
+			}
+			dbOpts := *opts
+			dbOpts.Auth.Database = dbName
+			connStr := fmt.Sprintf("clickhouse://%s:%s@%s/%s",
+				dbOpts.Auth.Username, dbOpts.Auth.Password, dbOpts.Addr[0], dbName)
+			args := append(tt.args, "--clickhouse-connection", connStr)
+			runPggen(t, chgen, args...)
+			if !*update {
+				assertNoGitDiff(t)
+			}
+		})
+	}
 }
 
 var (

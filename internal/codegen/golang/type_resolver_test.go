@@ -19,10 +19,11 @@ func TestTypeResolver_Resolve(t *testing.T) {
 	caser.AddAcronym("id", "ID")
 	pgDeviceEnum := pg.EnumType{Name: "device_type", Labels: []string{"macos", "ios", "web"}}
 	goDeviceEnum := &gotype.EnumType{
-		SQLName: pgDeviceEnum.Name,
-		Name:    "DeviceType",
-		Labels:  []string{"DeviceTypeMacOS", "DeviceTypeIOS", "DeviceTypeWeb"},
-		Values:  []string{"macos", "ios", "web"},
+		SQLName:     pgDeviceEnum.Name,
+		SQLKindName: "Postgres",
+		Name:        "DeviceType",
+		Labels:      []string{"DeviceTypeMacOS", "DeviceTypeIOS", "DeviceTypeWeb"},
+		Values:      []string{"macos", "ios", "web"},
 	}
 	tests := []struct {
 		name      string
@@ -207,7 +208,7 @@ func TestType_QualifyRel(t *testing.T) {
 		{
 			typ: gotype.NewEnumType(
 				"example.com/foo",
-				"device", []string{"macos"},
+				"device", "device", "Postgres", []string{"macos"},
 				caser,
 			),
 			otherPkgPath: "example.com/bar",
@@ -216,7 +217,7 @@ func TestType_QualifyRel(t *testing.T) {
 		{
 			typ: gotype.NewEnumType(
 				"example.com/bar",
-				"device", []string{"macos"},
+				"device", "device", "Postgres", []string{"macos"},
 				caser,
 			),
 			otherPkgPath: "example.com/bar",

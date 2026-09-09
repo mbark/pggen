@@ -36,7 +36,7 @@ CREATE TABLE cdr (
 
 func newInferrer(t *testing.T, opts ...Option) *Inferrer {
 	t.Helper()
-	conn, cleanup := chtest.NewClickHouseDBString(t, texts.Dedent(schema))
+	conn, _, cleanup := chtest.NewClickHouseDBString(t, texts.Dedent(schema))
 	t.Cleanup(cleanup)
 	return NewInferrer(conn, opts...)
 }

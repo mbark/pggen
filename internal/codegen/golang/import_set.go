@@ -26,12 +26,16 @@ func (s *ImportSet) AddPackage(p string) {
 func (s *ImportSet) AddType(typ gotype.Type) {
 	s.AddPackage(typ.Import())
 	unwrapped := gotype.UnwrapNestedType(typ)
-	comp, ok := unwrapped.(*gotype.CompositeType)
-	if !ok {
-		return
-	}
-	for _, childType := range comp.FieldTypes {
-		s.AddType(childType)
+	switch t := unwrapped.(type) {
+	case *gotype.CompositeType:
+		for _, childType := range t.FieldTypes {
+			s.AddType(childType)
+		}
+	case *gotype.MapType:
+		// A map's Import is empty because its key and value can come from
+		// different packages, so recurse into both.
+		s.AddType(t.Key)
+		s.AddType(t.Val)
 	}
 }
 
