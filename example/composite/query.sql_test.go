@@ -25,8 +25,7 @@ func registerCitext(t *testing.T, ctx context.Context, conn *pgx.Conn) {
 }
 
 func TestNewQuerier_SearchScreenshots(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	ctx := context.Background()
 	registerCitext(t, ctx, conn)
 	require.NoError(t, RegisterTypes(ctx, conn))
@@ -103,8 +102,7 @@ func TestNewQuerier_SearchScreenshots(t *testing.T) {
 }
 
 func TestNewQuerier_ArraysInput(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	ctx := context.Background()
 	registerCitext(t, ctx, conn)
 	require.NoError(t, RegisterTypes(ctx, conn))
@@ -125,8 +123,7 @@ func TestNewQuerier_ArraysInput(t *testing.T) {
 }
 
 func TestNewQuerier_UserEmails(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	ctx := context.Background()
 	registerCitext(t, ctx, conn)
 	require.NoError(t, RegisterTypes(ctx, conn))

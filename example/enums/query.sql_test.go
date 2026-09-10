@@ -17,8 +17,7 @@ func ptrDT(d DeviceType) *DeviceType { return &d }
 func TestNewQuerier_FindAllDevices(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -73,8 +72,7 @@ func toDeviceTypePtrs(ds []DeviceType) []*DeviceType {
 func TestNewQuerier_FindOneDeviceArray(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -99,8 +97,7 @@ func TestNewQuerier_FindOneDeviceArray(t *testing.T) {
 func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -125,8 +122,7 @@ func TestNewQuerier_FindManyDeviceArray(t *testing.T) {
 func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -158,8 +154,7 @@ func TestNewQuerier_FindManyDeviceArrayWithNum(t *testing.T) {
 func TestNewQuerier_EnumInsideComposite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)

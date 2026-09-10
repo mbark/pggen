@@ -23,11 +23,11 @@ func (c CompositeTypeDeclarer) DedupeKey() string {
 func (c CompositeTypeDeclarer) Declare(pkgPath string) (string, error) {
 	sb := &strings.Builder{}
 	// Doc string
-	if c.comp.PgComposite.Name != "" {
+	if c.comp.SQLName != "" {
 		sb.WriteString("// ")
 		sb.WriteString(c.comp.Name)
 		sb.WriteString(" represents the Postgres composite type ")
-		sb.WriteString(strconv.Quote(c.comp.PgComposite.Name))
+		sb.WriteString(strconv.Quote(c.comp.SQLName))
 		sb.WriteString(".\n")
 	}
 	// Struct declaration.
@@ -39,20 +39,24 @@ func (c CompositeTypeDeclarer) Declare(pkgPath string) (string, error) {
 	} else {
 		sb.WriteString(" {\n") // type Foo struct {\n
 	}
-	// Struct fields.
-	nameLen, typeLen := getLongestNameTypes(c.comp, pkgPath)
+	// Struct fields. Qualifying a type is not free and the widths need every
+	// one of them, so qualify each once and lay the fields out from that.
+	qualTypes := make([]string, len(c.comp.FieldTypes))
+	for i, fieldType := range c.comp.FieldTypes {
+		qualTypes[i] = gotype.QualifyType(fieldType, pkgPath, nil)
+	}
+	nameLen, typeLen := longestNameType(c.comp.FieldNames, qualTypes)
 	for i, name := range c.comp.FieldNames {
 		// Name
 		sb.WriteRune('\t')
 		sb.WriteString(name)
 		// Type
-		qualType := gotype.QualifyType(c.comp.FieldTypes[i], pkgPath)
 		sb.WriteString(strings.Repeat(" ", nameLen-len(name)))
-		sb.WriteString(qualType)
+		sb.WriteString(qualTypes[i])
 		// JSON struct tag
-		sb.WriteString(strings.Repeat(" ", typeLen-len(qualType)))
+		sb.WriteString(strings.Repeat(" ", typeLen-len(qualTypes[i])))
 		sb.WriteString("`json:")
-		sb.WriteString(strconv.Quote(c.comp.PgComposite.ColumnNames[i]))
+		sb.WriteString(strconv.Quote(c.comp.SQLColumnNames[i]))
 		sb.WriteString("`")
 		sb.WriteRune('\n')
 	}
@@ -60,24 +64,17 @@ func (c CompositeTypeDeclarer) Declare(pkgPath string) (string, error) {
 	return sb.String(), nil
 }
 
-// getLongestNameTypes returns the length of the longest name and type name for
-// all child fields of a composite type. Useful for aligning struct definitions.
-func getLongestNameTypes(typ *gotype.CompositeType, pkgPath string) (int, int) {
+// longestNameType returns the column widths that align a composite's struct
+// fields: the longest field name and the longest qualified type, each plus the
+// single space that separates it from what follows.
+func longestNameType(names, qualTypes []string) (int, int) {
 	nameLen := 0
-	for _, name := range typ.FieldNames {
-		if n := len(name); n > nameLen {
-			nameLen = n
-		}
+	for _, name := range names {
+		nameLen = max(nameLen, len(name))
 	}
-	nameLen++ // 1 space to separate name from type
-
 	typeLen := 0
-	for _, childType := range typ.FieldTypes {
-		if n := len(gotype.QualifyType(childType, pkgPath)); n > typeLen {
-			typeLen = n
-		}
+	for _, qualType := range qualTypes {
+		typeLen = max(typeLen, len(qualType))
 	}
-	typeLen++ // 1 space to separate type from struct tags.
-
-	return nameLen, typeLen
+	return nameLen + 1, typeLen + 1
 }

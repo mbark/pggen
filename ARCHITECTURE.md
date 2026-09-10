@@ -4,21 +4,32 @@ In a nutshell, pggen runs each query on Postgres to extract type information,
 and generates the appropriate code. In detail, pggen processes a query file
 in the following steps.
 
+There are two binaries. `pggen` targets Postgres; `chgen` targets ClickHouse.
+They share everything except the two steps that depend on the database — type
+inference and the code template — so the steps below describe both, noting
+where the dialects diverge. `GenerateOptions.Dialect` selects between them, and
+each binary sets it.
+
 1.  Resolve the query files from the `--query-glob` flag and schema files from
     the `--schema-glob` flag in [cmd/pggen/pggen.go]. Pass the normalized 
     options to `pggen.Generate` in [generate.go].
     
-2.  Start Postgres by either connecting to the database specified in 
-    `--postgres-connection` or by starting a new Dockerized Postgres instance.
-    [internal/pgdocker/pgdocker.go] creates and destroys Docker images for 
-    pggen.
+2.  Start the database by either connecting to the one specified in
+    `--postgres-connection` (`--clickhouse-connection` for chgen) or by starting
+    a new Dockerized instance. [internal/dbdocker] holds the container plumbing
+    both dialects share; [internal/pgdocker/pgdocker.go] and
+    [internal/chdocker/chdocker.go] supply the image, port, environment, and
+    readiness check for each.
 
 3.  Parse each query files into an `*ast.File` containing many 
     `*ast.SourceQuery` nodes in [internal/parser/interface.go].
 
-4.  Infer the Postgres types and nullability for the input parameters and output
-    columns of an `*ast.SourceQuery` and store the results in 
-    `pginfer.TypedQuery` in [internal/pginfer/pginfer.go].
+4.  Infer the database types and nullability for the input parameters and output
+    columns of an `*ast.SourceQuery` and store the results in
+    `codegen.TypedQuery` ([internal/codegen/common.go]), the dialect-neutral
+    representation both code generators consume. Postgres uses
+    [internal/pginfer/pginfer.go]; ClickHouse uses
+    [internal/chinfer/chinfer.go].
     
     To determine the Postgres types, pggen uses itself to compile the queries
     in [internal/pg/query.sql]. The queries leverage the Postgres prepare 
@@ -37,11 +48,28 @@ in the following steps.
     control flow analysis to determine nullability. I've started down that road
     in [pgplan.go](./internal/pgplan/pgplan.go).
 
+    ClickHouse works differently in every respect. It has no catalog and no
+    OIDs: a type name like `LowCardinality(Nullable(String))` describes the type
+    completely, so [internal/ch] parses names into a tree rather than resolving
+    identifiers. It has no `PREPARE` either, but `DESCRIBE (<query>)` analyses a
+    query without running it and reports the result columns. Nullability is
+    exact rather than heuristic, since ClickHouse spells it in the type. And
+    parameters need no round trip at all: `{name:Type}` already carries the
+    type, so `ch.ScanParams` reads them out of the query text.
+
+    The catch is that `DESCRIBE` refuses to parse a query whose parameters are
+    unset, even though their values cannot affect the result columns, so
+    `ch.ZeroLiteral` binds a throwaway literal for each one.
+
 5.  Transform each `*ast.File` into `codegen.QueryFile` in [generate.go]
     `parseQueries`.
 
 6.  Use a language-specific code generator to transform `codegen.QueryFile`
     into a `golang.TemplatedFile` like with [internal/codegen/golang/templater.go].
+    The templater, the leader-file selection, and the declarer machinery are
+    shared; the dialects differ in their `TypeResolver`, their known-type table,
+    their `Emit*` helpers, and their template (`query.gotemplate` versus
+    `query_clickhouse.gotemplate`).
 
 7.  Emit the generated code from `golang.TemplateFile` in
     [internal/codegen/golang/templated_file.go]
@@ -50,6 +78,11 @@ in the following steps.
 [internal/parser/interface.go]: internal/parser/interface.go
 [internal/pgdocker/pgdocker.go]: internal/pgdocker/pgdocker.go
 [internal/pginfer/pginfer.go]: internal/pginfer/pginfer.go
+[internal/chinfer/chinfer.go]: internal/chinfer/chinfer.go
+[internal/chdocker/chdocker.go]: internal/chdocker/chdocker.go
+[internal/dbdocker]: internal/dbdocker/dbdocker.go
+[internal/ch]: internal/ch
+[internal/codegen/common.go]: internal/codegen/common.go
 [internal/pg/query.sql]: internal/pg/query.sql
 [generate.go]: ./generate.go
 [internal/codegen/golang/templater.go]: internal/codegen/golang/templater.go

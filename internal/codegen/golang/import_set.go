@@ -21,18 +21,17 @@ func (s *ImportSet) AddPackage(p string) {
 	s.imports[p] = struct{}{}
 }
 
-// AddType adds all fully qualified package paths needed for type and any child
-// types.
+// AddType adds the packages needed for typ and every type nested inside it.
+//
+// Only a leaf carries a package, so the whole tree has to be walked: a type
+// like []map[string]time.Time names "time" three wrappers down.
 func (s *ImportSet) AddType(typ gotype.Type) {
-	s.AddPackage(typ.Import())
-	unwrapped := gotype.UnwrapNestedType(typ)
-	comp, ok := unwrapped.(*gotype.CompositeType)
-	if !ok {
-		return
-	}
-	for _, childType := range comp.FieldTypes {
-		s.AddType(childType)
-	}
+	gotype.Walk(typ, func(t gotype.Type) bool {
+		if imp, ok := t.(*gotype.ImportType); ok {
+			s.AddPackage(imp.PkgPath)
+		}
+		return true
+	})
 }
 
 // ImportPkg is a single import entry, optionally with an alias.

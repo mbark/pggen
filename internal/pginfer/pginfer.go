@@ -9,62 +9,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/pg"
 )
 
 const defaultTimeout = 3 * time.Second
-
-// TypedQuery is an enriched form of ast.SourceQuery after running it on
-// Postgres to get information about the ast.SourceQuery.
-type TypedQuery struct {
-	// Name of the query, from the comment preceding the query. Like 'FindAuthors'
-	// in the source SQL: "-- name: FindAuthors :many"
-	Name string
-	// The result output kind, :one, :many, or :exec.
-	ResultKind ast.ResultKind
-	// The comment lines preceding the query, without the SQL comment syntax and
-	// excluding the :name line.
-	Doc []string
-	// The SQL query, with pggen functions replaced with Postgres syntax. Ready
-	// to run on Postgres with the PREPARE statement.
-	PreparedSQL string
-	// The input parameters to the query.
-	Inputs []InputParam
-	// The output columns of the query.
-	Outputs []OutputColumn
-	// Qualified protocol buffer message type to use for each output row, like
-	// "erp.api.Product". If empty, generate our own Row type.
-	ProtobufType string
-	// User-specified output row struct name, like "ItemRow". If set, multiple
-	// queries can share the same output struct.
-	OutputType string
-	// Set when this query is one fanned-out statement of a paginate=<spec>
-	// query. VariantGroup is the public dispatcher name; VariantKey identifies
-	// the sort key + direction. Empty VariantGroup means an ordinary query.
-	VariantGroup string
-	VariantKey   ast.VariantKey
-}
-
-// InputParam is an input parameter for a prepared query.
-type InputParam struct {
-	// Name of the param, like 'FirstName' in pggen.arg('FirstName').
-	PgName string
-	// The postgres type of this param as reported by Postgres.
-	PgType pg.Type
-}
-
-// OutputColumn is a single column output from a select query or returning
-// clause in an update, insert, or delete query.
-type OutputColumn struct {
-	// Name of an output column, named by Postgres, like "foo" in "SELECT 1 as foo".
-	PgName string
-	// The postgres type of the column as reported by Postgres.
-	PgType pg.Type
-	// If the type can be null; depends on the query. A column defined
-	// with a NOT NULL constraint can still be null in the output with a left
-	// join. Nullability is determined using rudimentary control-flow analysis.
-	Nullable bool
-}
 
 type Inferrer struct {
 	conn        *pgx.Conn
@@ -80,25 +29,25 @@ func NewInferrer(conn *pgx.Conn) *Inferrer {
 	}
 }
 
-func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (TypedQuery, error) {
+func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, error) {
 	inputs, outputs, err := inf.prepareTypes(query)
 	if err != nil {
-		return TypedQuery{}, fmt.Errorf("infer output types for query: %w", err)
+		return codegen.TypedQuery{}, fmt.Errorf("infer output types for query: %w", err)
 	}
 	if query.ResultKind != ast.ResultKindExec && len(outputs) == 0 {
-		return TypedQuery{}, fmt.Errorf(
+		return codegen.TypedQuery{}, fmt.Errorf(
 			"query %s has incompatible result kind %s; the query doesn't return any columns; "+
 				"use :exec if query shouldn't return any columns",
 			query.Name, query.ResultKind)
 	}
 	if query.ResultKind != ast.ResultKindExec && countVoids(outputs) == len(outputs) {
-		return TypedQuery{}, fmt.Errorf(
+		return codegen.TypedQuery{}, fmt.Errorf(
 			"query %s has incompatible result kind %s; the query only has void columns; "+
 				"use :exec if query shouldn't return any columns",
 			query.Name, query.ResultKind)
 	}
-	doc := extractDoc(query)
-	return TypedQuery{
+	doc := codegen.ExtractDoc(query)
+	return codegen.TypedQuery{
 		Name:         query.Name,
 		ResultKind:   query.ResultKind,
 		Doc:          doc,
@@ -112,7 +61,7 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (TypedQuery, error) {
 	}, nil
 }
 
-func (inf *Inferrer) prepareTypes(query *ast.SourceQuery) (_a []InputParam, _ []OutputColumn, mErr error) {
+func (inf *Inferrer) prepareTypes(query *ast.SourceQuery) (_a []codegen.InputParam, _ []codegen.OutputColumn, mErr error) {
 	// Execute the query to get field descriptions of the output columns.
 	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 	defer cancel()
@@ -159,7 +108,7 @@ func (inf *Inferrer) prepareTypes(query *ast.SourceQuery) (_a []InputParam, _ []
 	}
 
 	// Build input params.
-	var inputParams []InputParam
+	var inputParams []codegen.InputParam
 	if len(stmtDesc.ParamOIDs) > 0 {
 		types, err := inf.typeFetcher.FindTypesByOIDs(stmtDesc.ParamOIDs...)
 		if err != nil {
@@ -170,9 +119,9 @@ func (inf *Inferrer) prepareTypes(query *ast.SourceQuery) (_a []InputParam, _ []
 			if !ok {
 				return nil, nil, fmt.Errorf("no postgres type name found for parameter %s with oid %d", query.ParamNames[i], oid)
 			}
-			inputParams = append(inputParams, InputParam{
+			inputParams = append(inputParams, codegen.InputParam{
 				PgName: query.ParamNames[i],
-				PgType: inputType,
+				Type:   inputType,
 			})
 		}
 	}
@@ -194,15 +143,15 @@ func (inf *Inferrer) prepareTypes(query *ast.SourceQuery) (_a []InputParam, _ []
 	}
 
 	// Create output columns
-	var outputColumns []OutputColumn
+	var outputColumns []codegen.OutputColumn
 	for i, desc := range stmtDesc.Fields {
 		pgType, ok := outputTypes[desc.DataTypeOID]
 		if !ok {
 			return nil, nil, fmt.Errorf("no postgrestype name found for column %s with oid %d", desc.Name, desc.DataTypeOID)
 		}
-		outputColumns = append(outputColumns, OutputColumn{
+		outputColumns = append(outputColumns, codegen.OutputColumn{
 			PgName:   desc.Name,
-			PgType:   pgType,
+			Type:     pgType,
 			Nullable: nullables[i],
 		})
 	}
@@ -260,25 +209,10 @@ func createParamArgs(query *ast.SourceQuery) []interface{} {
 	return args
 }
 
-func extractDoc(query *ast.SourceQuery) []string {
-	if query.Doc == nil || len(query.Doc.List) <= 1 {
-		return nil
-	}
-	// Drop last line, like: "-- name: Foo :exec"
-	lines := make([]string, len(query.Doc.List)-1)
-	for i := range lines {
-		comment := query.Doc.List[i].Text
-		// TrimLeft to remove runs of dashes. TrimPrefix only removes fixed number.
-		noDashes := strings.TrimLeft(comment, "-")
-		lines[i] = strings.TrimSpace(noDashes)
-	}
-	return lines
-}
-
-func countVoids(outputs []OutputColumn) int {
+func countVoids(outputs []codegen.OutputColumn) int {
 	n := 0
 	for _, out := range outputs {
-		if _, ok := out.PgType.(pg.VoidType); ok {
+		if _, ok := out.Type.(pg.VoidType); ok {
 			n++
 		}
 	}

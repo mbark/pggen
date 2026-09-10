@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/mbark/pggen/internal/casing"
-	"github.com/mbark/pggen/internal/pg"
+	"github.com/mbark/pggen/internal/sqltype"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,23 +24,32 @@ type Type interface {
 type (
 	// ArrayType is a Go slice type.
 	ArrayType struct {
-		PgArray pg.ArrayType // original Postgres array type
-		Elem    Type         // element type of the slice, like int for []int
+		SQLName string // name of the backing database array type, like _int4
+		Elem    Type   // element type of the slice, like int for []int
+	}
+
+	// MapType is a Go map type. ClickHouse has Map(K, V); Postgres has no
+	// equivalent, so this is only produced by the ClickHouse resolver.
+	MapType struct {
+		SQLName string // name of the backing database map type, like Map(String, String)
+		Key     Type
+		Val     Type
 	}
 
 	// CompositeType is a struct type that represents a Postgres composite type.
 	CompositeType struct {
-		PgComposite pg.CompositeType // original Postgres composite type
-		Name        string           // Go-style type name in UpperCamelCase
-		FieldNames  []string         // Go-style child names in UpperCamelCase
-		FieldTypes  []Type
+		SQLName        string   // name of the backing database composite type
+		SQLColumnNames []string // names of the composite's columns, in order
+		Name           string   // Go-style type name in UpperCamelCase
+		FieldNames     []string // Go-style child names in UpperCamelCase
+		FieldTypes     []Type
 	}
 
 	// EnumType is a string type with constant values that maps to the labels of
 	// a Postgres enum.
 	EnumType struct {
-		PgEnum pg.EnumType // the original Postgres enum type
-		Name   string      // name of the unqualified Go type
+		SQLName string // name of the backing database enum type
+		Name    string // name of the unqualified Go type
 		// Labels of the Postgres enum formatted as Go identifiers ordered in the
 		// same order as in Postgres.
 		Labels []string
@@ -58,8 +67,7 @@ type (
 	// OpaqueType is a type where only the name is known, as with a user-provided
 	// custom type.
 	OpaqueType struct {
-		PgType pg.Type // original Postgres type
-		Name   string  // name of the unqualified Go type
+		Name string // name of the unqualified Go type
 	}
 
 	// PointerType is a pointer to another Go type.
@@ -73,8 +81,13 @@ type (
 	VoidType struct{}
 )
 
-func (a *ArrayType) Import() string   { return a.Elem.Import() }
+func (a *ArrayType) Import() string   { return "" }
 func (a *ArrayType) BaseName() string { return "[]" + a.Elem.BaseName() }
+
+func (m *MapType) Import() string { return "" }
+func (m *MapType) BaseName() string {
+	return "map[" + m.Key.BaseName() + "]" + m.Val.BaseName()
+}
 
 func (c *CompositeType) Import() string   { return "" }
 func (c *CompositeType) BaseName() string { return c.Name }
@@ -94,97 +107,62 @@ func (o *PointerType) BaseName() string { return "*" + o.Elem.BaseName() }
 func (e *VoidType) Import() string   { return "" }
 func (e *VoidType) BaseName() string { return "" }
 
-func getTypePackage(typ Type) string {
-	switch typ := typ.(type) {
-	case *ArrayType:
-		return getTypePackage(typ.Elem)
-	case *CompositeType:
-		return ""
-	case *EnumType:
-		return ""
-	case *ImportType:
-		return typ.PkgPath
-	case *OpaqueType:
-		return ""
-	case *PointerType:
-		return getTypePackage(typ.Elem)
-	case *VoidType:
-		return ""
-	default:
-		panic(fmt.Sprintf("unhandled getTypePackage type %T", typ))
-	}
-}
-
 // QualifyType returns the Go qualified type string for typ, relative to
-// otherPkgPath. If aliases is non-nil, it maps full package paths to import
-// aliases for resolving name collisions.
-func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
-	sb := &strings.Builder{}
-	arrType, isArr := typ.(*ArrayType)
-	if isArr {
-		sb.WriteString("[]")
-		typ = arrType.Elem
-	}
-	ptrType, isPtr := typ.(*PointerType)
-	if isPtr {
-		sb.WriteString("*")
-		typ = ptrType.Elem
+// otherPkgPath. aliases maps a full package path to the import alias to
+// qualify it with, for the packages whose short names collide; it may be nil.
+func QualifyType(typ Type, otherPkgPath string, aliases map[string]string) string {
+	// A composite type qualifies each of its parts on its own, recursively:
+	// the parts can come from different packages, and a map or an array can
+	// appear at any depth. Only a leaf carries an import.
+	switch t := typ.(type) {
+	case *MapType:
+		return "map[" + QualifyType(t.Key, otherPkgPath, aliases) + "]" +
+			QualifyType(t.Val, otherPkgPath, aliases)
+	case *ArrayType:
+		return "[]" + QualifyType(t.Elem, otherPkgPath, aliases)
+	case *PointerType:
+		return "*" + QualifyType(t.Elem, otherPkgPath, aliases)
 	}
 
-	pkg := getTypePackage(typ)
-	if typ.Import() == otherPkgPath || typ.Import() == "" || pkg == "" {
-		sb.WriteString(typ.BaseName())
-		return sb.String()
+	name := typ.BaseName()
+	pkg := typ.Import()
+	if pkg == "" || pkg == otherPkgPath {
+		return name
 	}
-	if !strings.ContainsRune(otherPkgPath, '.') && pkg == otherPkgPath {
-		// If the otherPkgPath is unqualified and matches the package path, assume
-		// the same package.
-		return typ.BaseName()
+	shortPkg := aliases[pkg]
+	if shortPkg == "" {
+		shortPkg = ExtractShortPackage([]byte(pkg))
 	}
-	sb.Grow(len(typ.BaseName()))
-	if typ.Import() != "" {
-		// Check for an import alias first.
-		shortPkg := ""
-		if len(aliases) > 0 && aliases[0] != nil {
-			shortPkg = aliases[0][pkg]
-		}
-		if shortPkg == "" {
-			shortPkg = ExtractShortPackage([]byte(pkg))
-		}
-		sb.WriteString(shortPkg)
-		sb.WriteRune('.')
-	}
-	sb.WriteString(typ.BaseName())
-	return sb.String()
+	return shortPkg + "." + name
 }
 
-func NewArrayType(pgArray pg.ArrayType, elemType Type) Type {
+func NewArrayType(sqlName string, elemType Type) Type {
 	return &ArrayType{
-		PgArray: pgArray,
+		SQLName: sqlName,
 		Elem:    elemType,
 	}
 }
 
-func NewEnumType(pkgPath string, pgEnum pg.EnumType, caser casing.Caser) Type {
-	name := caser.ToUpperGoIdent(pgEnum.Name)
+func NewEnumType(pkgPath, sqlName string, sqlLabels []string, caser casing.Caser) Type {
+	name := caser.ToUpperGoIdent(sqlName)
 	if name == "" {
-		name = ChooseFallbackName(pgEnum.Name, "UnnamedEnum")
+		name = ChooseFallbackName(sqlName, "UnnamedEnum")
 	}
-	labels := make([]string, len(pgEnum.Labels))
-	values := make([]string, len(pgEnum.Labels))
-	for i, label := range pgEnum.Labels {
+	labels := make([]string, len(sqlLabels))
+	values := make([]string, len(sqlLabels))
+	for i, label := range sqlLabels {
 		ident := caser.ToUpperGoIdent(label)
 		if ident == "" {
 			ident = ChooseFallbackName(label, "UnnamedLabel"+strconv.Itoa(i))
 		}
 		labels[i] = name + ident
-		values[i] = pgEnum.Labels[i]
+		values[i] = sqlLabels[i]
 	}
 	typ := &EnumType{
-		PgEnum: pgEnum,
-		Name:   name,
-		Labels: labels,
-		Values: values,
+		SQLName: sqlName,
+		Name:    name,
+		Labels:  labels,
+		Values:  values,
 	}
 	if pkgPath != "" {
 		return &ImportType{
@@ -196,13 +174,13 @@ func NewEnumType(pkgPath string, pgEnum pg.EnumType, caser casing.Caser) Type {
 }
 
 // ParseOpaqueType creates a Type by parsing a fully qualified Go type like
-// "github.com/jschaf/custom.Int4" with the backing pg.Type.
+// "github.com/jschaf/custom.Int4" with the backing database type.
 //
 //   - []int
 //   - []*int
 //   - *example.com/foo.Qux
 //   - []*example.com/foo.Qux
-func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
+func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 	bs := []byte(qualType)
 	isArr := bs[0] == '['
 	if isArr {
@@ -231,11 +209,6 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 		}
 	}
 	var typ Type = &OpaqueType{Name: name}
-	// On array types, the PgType goes on the Array. In all other cases, it
-	// goes on the OpaqueType.
-	if t, ok := typ.(*OpaqueType); ok && !isArr {
-		t.PgType = pgType
-	}
 
 	if isQualifiedType := idx != -1; isQualifiedType {
 		pkgPath := bs[:idx]
@@ -250,33 +223,51 @@ func ParseOpaqueType(qualType string, pgType pg.Type) (Type, error) {
 	}
 
 	if isArr {
-		pgArr, ok := pgType.(pg.ArrayType)
-		// Ensure that if we have a Go slice type that the Postgres type is also
-		// an array. []byte is special since it maps to the Postgres bytea type.
-		if !ok && pgType != nil && qualType != "[]byte" {
-			return nil, fmt.Errorf("opaque pg type %T{%+v} for go type %q is not a pg.ArrayType", pgType, pgType, qualType)
+		arr, ok := sqlType.(sqltype.ArrayType)
+		// A Go slice type must be backed by a database array, except for the
+		// one slice that isn't.
+		if !ok && sqlType != nil && !IsByteSlice(qualType) {
+			return nil, fmt.Errorf("opaque database type %T{%+v} for go type %q is not an array type", sqlType, sqlType, qualType)
 		}
-		typ = &ArrayType{PgArray: pgArr, Elem: typ}
+		sqlName := ""
+		if ok {
+			sqlName = arr.String()
+		}
+		typ = &ArrayType{SQLName: sqlName, Elem: typ}
 	}
 
 	return typ, nil
 }
 
+// IsByteSlice reports whether the Go type spelled name is []byte, the one Go
+// slice that does not stand for a database array: the Postgres bytea, json and
+// jsonb types all map to it. Both the known-type table and a --go-type
+// override have to make that exception.
+func IsByteSlice(name string) bool { return name == "[]byte" }
+
 // MustParseKnownType creates a gotype.Type by parsing a fully qualified Go type
 // that pgx supports natively like "github.com/jackc/pgtype.Int4Array", or most
 // builtin types like "string" and []*int16.
-func MustParseKnownType(qualType string, pgType pg.Type) Type {
-	typ, err := ParseOpaqueType(qualType, pgType)
-	if err != nil {
-		panic(err.Error())
-	}
-	return typ
+func MustParseKnownType(qualType string) Type {
+	return mustParseOpaqueType(qualType, nil)
 }
 
-// MustParseOpaqueType creates a gotype.Type by parsing a fully qualified Go
-// type unsupported by pgx supports natively like "github.com/example/Foo"
-func MustParseOpaqueType(qualType string) Type {
-	typ, err := ParseOpaqueType(qualType, nil)
+// MustParseKnownArrayType creates a gotype.Type for a Go slice backed by a
+// database array type, like []int32 for _int4.
+//
+// The database type is not decoration: the array's name is what RegisterTypes
+// registers the type under. Taking a sqltype.ArrayType rather than a
+// sqltype.Type makes "this Go slice needs a database array" a compile-time
+// requirement instead of a run-time check.
+func MustParseKnownArrayType(qualType string, sqlType sqltype.ArrayType) Type {
+	return mustParseOpaqueType(qualType, sqlType)
+}
+
+// mustParseOpaqueType panics on a malformed type. The known-type tables are
+// package-level variables, so there is nowhere to return an error to and no
+// input but the literals in this repo.
+func mustParseOpaqueType(qualType string, sqlType sqltype.Type) Type {
+	typ, err := ParseOpaqueType(qualType, sqlType)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -329,6 +320,36 @@ func ChooseFallbackName(pgName string, prefix string) string {
 		}
 	}
 	return sb.String()
+}
+
+// Walk calls fn for typ and then for every type nested inside it, depth
+// first. If fn returns false, the types under that one are not visited.
+//
+// A Go type is a tree — []*ImportType, a CompositeType whose fields are
+// themselves composites, a ClickHouse Array(Map(String, T)) — and nearly
+// every question the code generator asks about one is a question about the
+// whole tree: which packages it imports, which declarations it needs, which
+// database types have to be registered. Walking it in one place keeps those
+// answers from disagreeing about which wrappers exist.
+func Walk(typ Type, fn func(Type) bool) {
+	if !fn(typ) {
+		return
+	}
+	switch t := typ.(type) {
+	case *ImportType:
+		Walk(t.Type, fn)
+	case *CompositeType:
+		for _, field := range t.FieldTypes {
+			Walk(field, fn)
+		}
+	case *MapType:
+		Walk(t.Key, fn)
+		Walk(t.Val, fn)
+	case *ArrayType:
+		Walk(t.Elem, fn)
+	case *PointerType:
+		Walk(t.Elem, fn)
+	}
 }
 
 // UnwrapNestedType returns the first type under gotype.ImportType or

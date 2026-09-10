@@ -7,7 +7,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/mbark/pggen/internal/chdocker"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/pgdocker"
 	"math/rand"
@@ -257,27 +259,29 @@ func TestExamples(t *testing.T) {
 	pggen := compilePggen(t)
 	// Start a single Docker container to use for all tests. Each test will create
 	// a new database in the Postgres cluster.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	docker, err := pgdocker.Start(ctx, nil)
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelStart()
+	docker, err := pgdocker.Start(startCtx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer errs.CaptureT(t, func() error { return docker.Stop(ctx) }, "stop docker")
+	defer errs.CaptureT(t, withTimeout(30*time.Second, docker.Stop), "stop docker")
 	mainConnStr, err := docker.ConnString()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Log("started dockerized postgres: " + mainConnStr)
-	conn, err := pgx.Connect(ctx, mainConnStr)
-	defer errs.CaptureT(t, func() error { return conn.Close(ctx) }, "close conn")
+	conn, err := pgx.Connect(startCtx, mainConnStr)
+	defer errs.CaptureT(t, withTimeout(30*time.Second, conn.Close), "close conn")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			dbName := "pggen_example_" + strconv.FormatInt(int64(rand.Int31()), 36)
-			if _, err = conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
+			if _, err := conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
 				t.Fatal(err)
 			}
 			connStr := mainConnStr + " dbname=" + dbName
@@ -305,26 +309,125 @@ func runPggen(t *testing.T, pggen string, args ...string) string {
 	return pggen
 }
 
-func compilePggen(t *testing.T) string {
+func compilePggen(t *testing.T) string { return compileBinary(t, "pggen") }
+
+func compileBinary(t *testing.T, name string) string {
 	tempDir := t.TempDir()
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("lookup go path: %s", err)
 	}
-	pggen := filepath.Join(tempDir, "pggen")
+	bin := filepath.Join(tempDir, name)
 	cmd := exec.Cmd{
 		Path: goBin,
-		Args: []string{goBin, "build", "-o", pggen, "./cmd/pggen"},
+		Args: []string{goBin, "build", "-o", bin, "./cmd/" + name},
 		Env:  os.Environ(),
 		Dir:  projDir,
 	}
-	t.Log("compiling pggen")
+	t.Log("compiling " + name)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Log("go build output:\n" + string(bytes.TrimSpace(output)))
-		t.Fatalf("compile pggen: %s", err)
+		t.Fatalf("compile %s: %s", name, err)
 	}
-	return pggen
+	return bin
+}
+
+// TestClickHouseExamples is the chgen counterpart of TestExamples: it
+// regenerates each ClickHouse example against a throwaway ClickHouse and
+// asserts the committed output still matches.
+func TestClickHouseExamples(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "example/clickhouse_cdr",
+			args: []string{
+				"--schema-glob", "example/clickhouse_cdr/schema.sql",
+				"--query-glob", "example/clickhouse_cdr/query.sql",
+			},
+		},
+		{
+			// Two query files in one package, plus --acronym and --go-type.
+			// The flags are part of what is asserted: --go-type on an enum
+			// only parses because the flag splits on the last "=", and the
+			// override resolves to a type in the generated package itself,
+			// which the emitter has to leave unqualified.
+			name: "example/clickhouse_multi",
+			args: []string{
+				"--schema-glob", "example/clickhouse_multi/schema.sql",
+				"--query-glob", "example/clickhouse_multi/*_query.sql",
+				"--acronym", "msisdn=MSISDN",
+				"--go-type", "Enum8('MOC' = 1, 'SMO' = 2, 'GPRS' = 7)=" +
+					"github.com/mbark/pggen/example/clickhouse_multi.RecordType",
+			},
+		},
+	}
+	if *update {
+		t.Log("updating integration test generated files")
+	}
+	chgen := compileBinary(t, "chgen")
+
+	// One container for every test; each test gets its own database in it.
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelStart()
+	docker, err := chdocker.Start(startCtx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errs.CaptureT(t, withTimeout(time.Minute, docker.Stop), "stop docker")
+	mainConnStr := docker.ConnString()
+	t.Log("started dockerized clickhouse: " + mainConnStr)
+
+	opts, err := clickhouse.ParseDSN(mainConnStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := clickhouse.Open(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errs.CaptureT(t, conn.Close, "close conn")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			dbName := "chgen_example_" + strconv.FormatInt(int64(rand.Int31()), 36)
+			if err := conn.Exec(ctx, `CREATE DATABASE `+dbName); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				errs.CaptureT(t, withTimeout(30*time.Second, func(ctx context.Context) error {
+					return conn.Exec(ctx, `DROP DATABASE `+dbName)
+				}), "drop database "+dbName)
+			})
+			dbOpts := *opts
+			dbOpts.Auth.Database = dbName
+			connStr := fmt.Sprintf("clickhouse://%s:%s@%s/%s",
+				dbOpts.Auth.Username, dbOpts.Auth.Password, dbOpts.Addr[0], dbName)
+			args := append(tt.args, "--clickhouse-connection", connStr)
+			runPggen(t, chgen, args...)
+			if !*update {
+				assertNoGitDiff(t)
+			}
+		})
+	}
+}
+
+// withTimeout adapts a context-taking call into the no-argument form
+// errs.CaptureT and t.Cleanup want, giving it a context of its own.
+//
+// Cleanup cannot borrow the context that set the resource up: that one may
+// well have expired by the time the last subtest is done, and a container
+// that is never stopped outlives the test run.
+func withTimeout(d time.Duration, fn func(context.Context) error) func() error {
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), d)
+		defer cancel()
+		return fn(ctx)
+	}
 }
 
 var (

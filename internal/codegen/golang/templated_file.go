@@ -2,11 +2,12 @@ package golang
 
 import (
 	"fmt"
-	"github.com/mbark/pggen/internal/ast"
-	"github.com/mbark/pggen/internal/codegen/golang/gotype"
-	"github.com/mbark/pggen/internal/pginfer"
 	"strconv"
 	"strings"
+
+	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/codegen"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
 )
 
 // TemplatedPackage is all templated files in a pggen invocation. The templated
@@ -18,6 +19,7 @@ type TemplatedPackage struct {
 // TemplatedFile is the Go version of a SQL query file with all information
 // needed to execute the codegen template.
 type TemplatedFile struct {
+	Dialect    codegen.Dialect  // the database the generated code talks to
 	Pkg        TemplatedPackage // the parent package containing this file
 	PkgPath    string           // full package path, like "github.com/foo/bar"
 	GoPkg      string           // the name of the Go package to use for the "package foo" declaration
@@ -147,6 +149,7 @@ func (pg PaginateGroup) EmitInterfaceMethod() (string, error) {
 // TemplatedQuery is a query with all information required to execute the
 // codegen template.
 type TemplatedQuery struct {
+	Dialect          codegen.Dialect   // the database the generated code talks to
 	Name             string            // name of the query, from the comment preceding the query
 	SQLVarName       string            // name of the string variable containing the SQL
 	ResultKind       ast.ResultKind    // kind of result: :one, :many, or :exec
@@ -224,7 +227,7 @@ type TemplatedParam struct {
 	LowerName string // name of the param in lowerCamelCase, like 'firstName' from pggen.arg('first_name')
 	QualType  string // package-qualified Go type to use for this param
 	Type      gotype.Type
-	RawName   pginfer.InputParam
+	RawName   codegen.InputParam
 }
 
 type TemplatedColumn struct {
@@ -246,6 +249,9 @@ func (tq TemplatedQuery) rowTypeName() string {
 }
 
 func (tf TemplatedFile) needsPgconnImport() bool {
+	if tf.Dialect == codegen.DialectClickHouse {
+		return false
+	}
 	if tf.IsLeader {
 		// Leader files define genericConn.Exec which returns pgconn.CommandTag.
 		return true
@@ -288,8 +294,8 @@ func (tq TemplatedQuery) EmitParams() string {
 func getLongestInput(inputs []TemplatedParam) (int, int) {
 	nameLen := 0
 	for _, out := range inputs {
-		if len(out.RawName.PgName) > nameLen {
-			nameLen = len(out.RawName.PgName)
+		if len(out.UpperName) > nameLen {
+			nameLen = len(out.UpperName)
 		}
 	}
 	nameLen++ // 1 space to separate name from type
@@ -559,21 +565,7 @@ func (tq TemplatedQuery) EmitRowStruct() string {
 		sb.WriteString("\n\ntype ")
 		sb.WriteString(tq.Name)
 		sb.WriteString("Row struct {\n")
-		maxNameLen, maxTypeLen := getLongestOutput(outs)
-		for _, out := range outs {
-			// Name
-			sb.WriteString("\t")
-			sb.WriteString(out.UpperName)
-			// Type
-			sb.WriteString(strings.Repeat(" ", maxNameLen-len(out.UpperName)))
-			sb.WriteString(out.QualType)
-			// JSON struct tag
-			sb.WriteString(strings.Repeat(" ", maxTypeLen-len(out.QualType)))
-			sb.WriteString("`json:")
-			sb.WriteString(strconv.Quote(out.PgName))
-			sb.WriteString("`")
-			sb.WriteRune('\n')
-		}
+		writeRowStructFields(sb, outs, codegen.DialectPostgres)
 		sb.WriteString("}")
 		return sb.String()
 	default:

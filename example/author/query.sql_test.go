@@ -14,8 +14,7 @@ import (
 )
 
 func TestNewQuerier_FindAuthorByID(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	q := NewQuerier(conn)
 	adamsID := insertAuthor(t, q, "john", "adams")
@@ -58,8 +57,7 @@ func TestNewQuerier_FindAuthorByID(t *testing.T) {
 }
 
 func TestNewQuerier_FindAuthors(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	adamsID := insertAuthor(t, q, "john", "adams")
 	washingtonID := insertAuthor(t, q, "george", "washington")
@@ -111,8 +109,7 @@ func TestNewQuerier_FindAuthors(t *testing.T) {
 }
 
 func TestNewQuerier_FindFirstNames(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	q := NewQuerier(conn)
 	adamsID := insertAuthor(t, q, "john", "adams")
@@ -136,8 +133,7 @@ func TestNewQuerier_FindFirstNames(t *testing.T) {
 }
 
 func TestNewQuerier_InsertAuthorSuffix(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 
 	t.Run("InsertAuthorSuffix", func(t *testing.T) {
@@ -179,8 +175,7 @@ func TestNewQuerier_InsertAuthorSuffix(t *testing.T) {
 }
 
 func TestNewQuerier_DeleteAuthorsByFirstName(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	insertAuthor(t, q, "john", "adams")
 	insertAuthor(t, q, "george", "washington")
@@ -199,8 +194,7 @@ func TestNewQuerier_DeleteAuthorsByFirstName(t *testing.T) {
 }
 
 func TestNewQuerier_DeleteAuthorsByFirstNameBatch(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	insertAuthor(t, q, "john", "adams")
 	insertAuthor(t, q, "george", "washington")
@@ -223,8 +217,7 @@ func TestNewQuerier_DeleteAuthorsByFirstNameBatch(t *testing.T) {
 }
 
 func TestNewQuerier_DeleteAuthorsByFullName(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	washingtonID := insertAuthor(t, q, "george", "washington")
 	_, err := q.InsertAuthorSuffix(context.Background(), InsertAuthorSuffixParams{
@@ -259,8 +252,7 @@ func TestNewQuerier_DeleteAuthorsByFullName(t *testing.T) {
 }
 
 func TestNewQuerier_DeleteAuthorsByFullNameBatch(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	washingtonID := insertAuthor(t, q, "george", "washington")
 	_, err := q.InsertAuthorSuffix(context.Background(), InsertAuthorSuffixParams{
@@ -299,8 +291,7 @@ func TestNewQuerier_DeleteAuthorsByFullNameBatch(t *testing.T) {
 }
 
 func TestNewQuerier_StringAggFirstName(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	washingtonID := insertAuthor(t, q, "george", "washington")
 	_, err := q.InsertAuthorSuffix(context.Background(), InsertAuthorSuffixParams{
@@ -344,8 +335,7 @@ func TestNewQuerier_StringAggFirstName(t *testing.T) {
 }
 
 func TestNewQuerier_ArrayAggFirstName(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	washingtonID := insertAuthor(t, q, "george", "washington")
 	_, err := q.InsertAuthorSuffix(context.Background(), InsertAuthorSuffixParams{

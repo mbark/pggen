@@ -12,6 +12,8 @@ import (
 
 // GenerateOptions are options to control generated Go output.
 type GenerateOptions struct {
+	// Which database the generated code talks to.
+	Dialect   codegen.Dialect
 	GoPkg     string
 	OutputDir string
 	// A map of lowercase acronyms to the upper case equivalent, like:
@@ -32,11 +34,20 @@ func Generate(opts GenerateOptions, queryFiles []codegen.QueryFile) error {
 	}
 	caser := casing.NewCaser()
 	caser.AddAcronyms(opts.Acronyms)
+
+	var resolver TypeResolver = NewPgTypeResolver(caser, opts.TypeOverrides)
+	if opts.Dialect == codegen.DialectClickHouse {
+		resolver = NewChTypeResolver(caser, opts.TypeOverrides)
+		if err := rejectPaginate(queryFiles); err != nil {
+			return err
+		}
+	}
 	templater := NewTemplater(TemplaterOpts{
 		Caser:            caser,
-		Resolver:         NewTypeResolver(caser, opts.TypeOverrides),
+		Resolver:         resolver,
 		Pkg:              pkgName,
 		InlineParamCount: opts.InlineParamCount,
+		Dialect:          opts.Dialect,
 	})
 	templatedFiles, err := templater.TemplateAll(queryFiles)
 	if err != nil {
@@ -55,7 +66,7 @@ func Generate(opts GenerateOptions, queryFiles []codegen.QueryFile) error {
 		templatedFiles[i].Pkg = pkg
 	}
 
-	tmpl, err := parseQueryTemplate()
+	tmpl, err := parseQueryTemplate(opts.Dialect)
 	if err != nil {
 		return fmt.Errorf("parse generated Go code template: %w", err)
 	}
@@ -69,10 +80,33 @@ func Generate(opts GenerateOptions, queryFiles []codegen.QueryFile) error {
 //go:embed query.gotemplate
 var queryTemplate string
 
-func parseQueryTemplate() (*template.Template, error) {
-	tmpl, err := template.New("gen_query").Parse(queryTemplate)
+//go:embed query_clickhouse.gotemplate
+var clickhouseQueryTemplate string
+
+func parseQueryTemplate(dialect codegen.Dialect) (*template.Template, error) {
+	name, src := "query.gotemplate", queryTemplate
+	if dialect == codegen.DialectClickHouse {
+		name, src = "query_clickhouse.gotemplate", clickhouseQueryTemplate
+	}
+	tmpl, err := template.New("gen_query").Parse(src)
 	if err != nil {
-		return nil, fmt.Errorf("parse query.gotemplate: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	return tmpl, nil
+}
+
+// rejectPaginate reports a clear error for the paginate= pragma, which the
+// ClickHouse backend does not generate dispatchers for yet.
+func rejectPaginate(queryFiles []codegen.QueryFile) error {
+	for _, file := range queryFiles {
+		for _, query := range file.Queries {
+			if query.VariantGroup != "" {
+				return fmt.Errorf(
+					"query %s in %s uses paginate=, which pggen does not support for ClickHouse yet; "+
+						"write the ORDER BY and keyset predicate out in SQL instead",
+					query.VariantGroup, file.SourcePath)
+			}
+		}
+	}
+	return nil
 }

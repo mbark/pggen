@@ -8,6 +8,7 @@ import (
 	gotok "go/token"
 	"io"
 	"os"
+	"strconv"
 )
 
 // If src != nil, readSource converts src to a []byte if possible; otherwise it
@@ -31,6 +32,26 @@ func readSource(filename string, src interface{}) ([]byte, error) {
 		return nil, errors.New("invalid source")
 	}
 	return os.ReadFile(filename)
+}
+
+// Placeholder renders the reference to a query parameter the way the target
+// dialect spells it. name is the pggen.arg name and ordinal is its 1-based
+// position in order of first appearance.
+type Placeholder func(name string, ordinal int) string
+
+// PostgresPlaceholder renders Postgres positional parameters: $1, $2, and so
+// on, in order of first appearance.
+func PostgresPlaceholder(_ string, ordinal int) string {
+	return "$" + strconv.Itoa(ordinal)
+}
+
+// ClickHousePlaceholder leaves a pggen.arg() reference exactly as written.
+//
+// ClickHouse query files declare their parameters natively, as {name:Type},
+// carrying a type pggen has no way to invent here. So this dialect rewrites
+// nothing, and Generate rejects pggen.arg() with an explanation instead.
+func ClickHousePlaceholder(name string, _ int) string {
+	return "pggen.arg('" + name + "')"
 }
 
 // A Mode value is a set of flags (or 0).
@@ -61,6 +82,14 @@ const (
 // fragments of erroneous source code). Multiple errors are returned via
 // a scanner.ErrorList which is sorted by source position.
 func ParseFile(fset *gotok.FileSet, filename string, src interface{}, mode Mode) (f *ast.File, err error) {
+	return ParseFileDialect(fset, filename, src, mode, PostgresPlaceholder)
+}
+
+// ParseFileDialect is ParseFile with control over how query parameters are
+// rendered into ast.SourceQuery.PreparedSQL. A dialect whose query files
+// already carry their own parameter syntax passes a Placeholder that leaves
+// the SQL untouched.
+func ParseFileDialect(fset *gotok.FileSet, filename string, src interface{}, mode Mode, ph Placeholder) (f *ast.File, err error) {
 	if fset == nil {
 		panic("parser.ParseFile: no token.FileSet provided (fset == nil)")
 	}
@@ -92,7 +121,7 @@ func ParseFile(fset *gotok.FileSet, filename string, src interface{}, mode Mode)
 	}()
 
 	// parse source
-	p.init(fset, filename, text, mode)
+	p.init(fset, filename, text, mode, ph)
 	f = p.parseFile()
 
 	return

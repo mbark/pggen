@@ -11,8 +11,7 @@ import (
 )
 
 func TestQuerier_FindDevicesByUser(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -54,8 +53,7 @@ func TestQuerier_FindDevicesByUser(t *testing.T) {
 }
 
 func TestQuerier_CompositeUser(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()
@@ -114,8 +112,7 @@ func TestQuerier_CompositeUser(t *testing.T) {
 }
 
 func TestQuerier_CompositeUserOne(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 	q := NewQuerier(conn)
 	ctx := context.Background()

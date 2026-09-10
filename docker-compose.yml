@@ -8,5 +8,25 @@ services:
     command: ["postgres", "-c", "log_statement=all"]
     environment:
       POSTGRES_DB: pggen
-      POSTGRES_PASSWORD: hunter2
       POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: hunter2
+
+  clickhouse:
+    image: "clickhouse/clickhouse-server:25.3"
+    # 9010/8124 rather than the usual 9000/8123 so this container can coexist
+    # with a ClickHouse another project already runs on the default ports.
+    ports:
+      - "9010:9000"
+      - "8124:8123"
+    restart: always
+    environment:
+      CLICKHOUSE_DB: pggen
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: hunter2
+      # The official image requires a password by default; there is no
+      # equivalent of POSTGRES_HOST_AUTH_METHOD=trust.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144

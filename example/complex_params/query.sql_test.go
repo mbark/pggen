@@ -10,8 +10,7 @@ import (
 )
 
 func TestNewQuerier_ParamArrayInt(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -38,8 +37,7 @@ func TestNewQuerier_ParamArrayInt(t *testing.T) {
 }
 
 func TestNewQuerier_ParamNested1(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -66,8 +64,7 @@ func TestNewQuerier_ParamNested1(t *testing.T) {
 }
 
 func TestNewQuerier_ParamNested2(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -97,8 +94,7 @@ func TestNewQuerier_ParamNested2(t *testing.T) {
 }
 
 func TestNewQuerier_ParamNested2Array(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -128,8 +124,7 @@ func TestNewQuerier_ParamNested2Array(t *testing.T) {
 }
 
 func TestNewQuerier_ParamNested3(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -163,8 +158,7 @@ func TestNewQuerier_ParamNested3(t *testing.T) {
 }
 
 func TestNewQuerier_ParamNested3_QueryAllDataTypes(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 	ctx := context.Background()
 	q := NewQuerier(conn)

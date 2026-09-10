@@ -6,6 +6,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/difftest"
 	"github.com/mbark/pggen/internal/pg"
 	"github.com/mbark/pggen/internal/pgtest"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestInferrer_InferTypes(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
+	conn := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
 		CREATE TABLE author (
 			author_id  serial PRIMARY KEY,
 			first_name text NOT NULL,
@@ -31,7 +32,6 @@ func TestInferrer_InferTypes(t *testing.T) {
 
 		CREATE DOMAIN us_postal_code AS text;
 	`))
-	defer cleanupFunc()
 	q := pg.NewQuerier(conn)
 	deviceTypeOID, err := q.FindOIDByName(context.Background(), "device_type")
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestInferrer_InferTypes(t *testing.T) {
 	tests := []struct {
 		name  string
 		query *ast.SourceQuery
-		want  TypedQuery
+		want  codegen.TypedQuery
 	}{
 		{
 			name: "literal query",
@@ -50,13 +50,13 @@ func TestInferrer_InferTypes(t *testing.T) {
 				PreparedSQL: "SELECT 1 as one, 'foo' as two",
 				ResultKind:  ast.ResultKindOne,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "LiteralQuery",
 				ResultKind:  ast.ResultKindOne,
 				PreparedSQL: "SELECT 1 as one, 'foo' as two",
-				Outputs: []OutputColumn{
-					{PgName: "one", PgType: pg.Int4, Nullable: false},
-					{PgName: "two", PgType: pg.Text, Nullable: false},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "one", Type: pg.Int4, Nullable: false},
+					{PgName: "two", Type: pg.Text, Nullable: false},
 				},
 			},
 		},
@@ -67,12 +67,12 @@ func TestInferrer_InferTypes(t *testing.T) {
 				PreparedSQL: "SELECT 1 AS num UNION SELECT 2 AS num",
 				ResultKind:  ast.ResultKindMany,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "UnionOneCol",
 				ResultKind:  ast.ResultKindMany,
 				PreparedSQL: "SELECT 1 AS num UNION SELECT 2 AS num",
-				Outputs: []OutputColumn{
-					{PgName: "num", PgType: pg.Int4, Nullable: true},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "num", Type: pg.Int4, Nullable: true},
 				},
 			},
 		},
@@ -83,13 +83,13 @@ func TestInferrer_InferTypes(t *testing.T) {
 				PreparedSQL: "SELECT '94109'::us_postal_code",
 				ResultKind:  ast.ResultKindOne,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "Domain",
 				ResultKind:  ast.ResultKindOne,
 				PreparedSQL: "SELECT '94109'::us_postal_code",
-				Outputs: []OutputColumn{{
+				Outputs: []codegen.OutputColumn{{
 					PgName:   "us_postal_code",
-					PgType:   pg.Text,
+					Type:     pg.Text,
 					Nullable: false,
 				}},
 			},
@@ -105,7 +105,7 @@ func TestInferrer_InferTypes(t *testing.T) {
 				`),
 				ResultKind: ast.ResultKindMany,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:       "UnionEnumArrays",
 				ResultKind: ast.ResultKindMany,
 				PreparedSQL: texts.Dedent(`
@@ -113,10 +113,10 @@ func TestInferrer_InferTypes(t *testing.T) {
 					UNION ALL
 					SELECT enum_range(NULL::device_type) AS device_types;
 				`),
-				Outputs: []OutputColumn{
+				Outputs: []codegen.OutputColumn{
 					{
 						PgName: "device_types",
-						PgType: pg.ArrayType{
+						Type: pg.ArrayType{
 							ID:   deviceTypeArrOID,
 							Name: "_device_type",
 							Elem: pg.EnumType{
@@ -140,16 +140,16 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ResultKind:  ast.ResultKindMany,
 				Doc:         newCommentGroup("--   Hello  ", "-- name: Foo"),
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "FindByFirstName",
 				ResultKind:  ast.ResultKindMany,
 				Doc:         []string{"Hello"},
 				PreparedSQL: "SELECT first_name FROM author WHERE first_name = $1;",
-				Inputs: []InputParam{
-					{PgName: "FirstName", PgType: pg.Text},
+				Inputs: []codegen.InputParam{
+					{PgName: "FirstName", Type: pg.Text},
 				},
-				Outputs: []OutputColumn{
-					{PgName: "first_name", PgType: pg.Text, Nullable: false},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "first_name", Type: pg.Text, Nullable: false},
 				},
 			},
 		},
@@ -162,16 +162,16 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ResultKind:  ast.ResultKindMany,
 				Doc:         newCommentGroup("--   Hello  ", "-- name: Foo"),
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "FindByFirstNameJoin",
 				ResultKind:  ast.ResultKindMany,
 				Doc:         []string{"Hello"},
 				PreparedSQL: "SELECT a1.first_name FROM author a1 JOIN author a2 USING (author_id) WHERE a1.first_name = $1;",
-				Inputs: []InputParam{
-					{PgName: "FirstName", PgType: pg.Text},
+				Inputs: []codegen.InputParam{
+					{PgName: "FirstName", Type: pg.Text},
 				},
-				Outputs: []OutputColumn{
-					{PgName: "first_name", PgType: pg.Text, Nullable: true},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "first_name", Type: pg.Text, Nullable: true},
 				},
 			},
 		},
@@ -184,13 +184,13 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ResultKind:  ast.ResultKindExec,
 				Doc:         newCommentGroup("-- One", "--- - two", "-- name: Foo"),
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "DeleteAuthorByID",
 				ResultKind:  ast.ResultKindExec,
 				Doc:         []string{"One", "- two"},
 				PreparedSQL: "DELETE FROM author WHERE author_id = $1;",
-				Inputs: []InputParam{
-					{PgName: "AuthorID", PgType: pg.Int4},
+				Inputs: []codegen.InputParam{
+					{PgName: "AuthorID", Type: pg.Int4},
 				},
 				Outputs: nil,
 			},
@@ -203,17 +203,17 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ParamNames:  []string{"AuthorID"},
 				ResultKind:  ast.ResultKindMany,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "DeleteAuthorByIDReturning",
 				ResultKind:  ast.ResultKindMany,
 				PreparedSQL: "DELETE FROM author WHERE author_id = $1 RETURNING author_id, first_name, suffix;",
-				Inputs: []InputParam{
-					{PgName: "AuthorID", PgType: pg.Int4},
+				Inputs: []codegen.InputParam{
+					{PgName: "AuthorID", Type: pg.Int4},
 				},
-				Outputs: []OutputColumn{
-					{PgName: "author_id", PgType: pg.Int4, Nullable: false},
-					{PgName: "first_name", PgType: pg.Text, Nullable: false},
-					{PgName: "suffix", PgType: pg.Text, Nullable: true},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "author_id", Type: pg.Int4, Nullable: false},
+					{PgName: "first_name", Type: pg.Text, Nullable: false},
+					{PgName: "suffix", Type: pg.Text, Nullable: true},
 				},
 			},
 		},
@@ -225,17 +225,17 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ParamNames:  []string{"AuthorID"},
 				ResultKind:  ast.ResultKindMany,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "UpdateByAuthorIDReturning",
 				ResultKind:  ast.ResultKindMany,
 				PreparedSQL: "UPDATE author set first_name = 'foo' WHERE author_id = $1 RETURNING author_id, first_name, suffix;",
-				Inputs: []InputParam{
-					{PgName: "AuthorID", PgType: pg.Int4},
+				Inputs: []codegen.InputParam{
+					{PgName: "AuthorID", Type: pg.Int4},
 				},
-				Outputs: []OutputColumn{
-					{PgName: "author_id", PgType: pg.Int4, Nullable: false},
-					{PgName: "first_name", PgType: pg.Text, Nullable: false},
-					{PgName: "suffix", PgType: pg.Text, Nullable: true},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "author_id", Type: pg.Int4, Nullable: false},
+					{PgName: "first_name", Type: pg.Text, Nullable: false},
+					{PgName: "suffix", Type: pg.Text, Nullable: true},
 				},
 			},
 		},
@@ -247,13 +247,13 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ParamNames:  []string{},
 				ResultKind:  ast.ResultKindExec,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "VoidOne",
 				ResultKind:  ast.ResultKindExec,
 				PreparedSQL: "SELECT ''::void;",
 				Inputs:      nil,
-				Outputs: []OutputColumn{
-					{PgName: "void", PgType: pg.Void, Nullable: false},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "void", Type: pg.Void, Nullable: false},
 				},
 			},
 		},
@@ -265,14 +265,14 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ParamNames:  []string{},
 				ResultKind:  ast.ResultKindOne,
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "VoidTwo",
 				ResultKind:  ast.ResultKindOne,
 				PreparedSQL: "SELECT 'foo' as foo, ''::void;",
 				Inputs:      nil,
-				Outputs: []OutputColumn{
-					{PgName: "foo", PgType: pg.Text, Nullable: false},
-					{PgName: "void", PgType: pg.Void, Nullable: false},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "foo", Type: pg.Text, Nullable: false},
+					{PgName: "void", Type: pg.Void, Nullable: false},
 				},
 			},
 		},
@@ -284,13 +284,13 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ResultKind:  ast.ResultKindOne,
 				Pragmas:     ast.Pragmas{ProtobufType: "foo.Bar"},
 			},
-			TypedQuery{
+			codegen.TypedQuery{
 				Name:        "PragmaProtoType",
 				ResultKind:  ast.ResultKindOne,
 				PreparedSQL: "SELECT 1 as one, 'foo' as two",
-				Outputs: []OutputColumn{
-					{PgName: "one", PgType: pg.Int4, Nullable: false},
-					{PgName: "two", PgType: pg.Text, Nullable: false},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "one", Type: pg.Int4, Nullable: false},
+					{PgName: "two", Type: pg.Text, Nullable: false},
 				},
 				ProtobufType: "foo.Bar",
 			},
@@ -304,14 +304,14 @@ func TestInferrer_InferTypes(t *testing.T) {
 				ResultKind:  ast.ResultKindOne,
 				Doc:         newCommentGroup("--   Hello  ", "-- name: Foo"),
 			},
-			want: TypedQuery{
+			want: codegen.TypedQuery{
 				Name:        "ArrayAggFirstName",
 				ResultKind:  ast.ResultKindOne,
 				Doc:         []string{"Hello"},
 				PreparedSQL: "SELECT array_agg(first_name) AS names FROM author;",
-				Inputs:      []InputParam{},
-				Outputs: []OutputColumn{
-					{PgName: "names", PgType: pg.TextArray, Nullable: true},
+				Inputs:      []codegen.InputParam{},
+				Outputs: []codegen.OutputColumn{
+					{PgName: "names", Type: pg.TextArray, Nullable: true},
 				},
 			},
 		},
@@ -332,10 +332,9 @@ func TestInferrer_InferTypes(t *testing.T) {
 }
 
 func TestInferrer_InferTypes_Error(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchema(t, []string{
+	conn := pgtest.NewPostgresSchema(t, []string{
 		"../../example/author/schema.sql",
 	})
-	defer cleanupFunc()
 
 	tests := []struct {
 		query *ast.SourceQuery
@@ -381,7 +380,7 @@ func TestInferrer_InferTypes_Error(t *testing.T) {
 		t.Run(tt.query.Name, func(t *testing.T) {
 			inferrer := NewInferrer(conn)
 			got, err := inferrer.InferTypes(tt.query)
-			assert.Equal(t, TypedQuery{}, got, "InferTypes should error and return empty TypedQuery struct")
+			assert.Equal(t, codegen.TypedQuery{}, got, "InferTypes should error and return empty TypedQuery struct")
 			assert.Equal(t, tt.want, err, "InferType error should match")
 		})
 	}

@@ -5,8 +5,8 @@ package numeric_external
 import (
 	"context"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 )
 
@@ -195,4 +195,3 @@ func (q *DBQuerier) FindNumericsScan(results pgx.BatchResults) ([]FindNumericsRo
 	}
 	return items, err
 }
-

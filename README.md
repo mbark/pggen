@@ -79,6 +79,83 @@ How to use pggen in three steps:
     ```
 [./example/composite/query.sql.go]: ./example/composite/query.sql.go
 
+## ClickHouse
+
+The same tool, pointed at ClickHouse, ships as `chgen`. Query files use the same
+`-- name:` annotations and the same pragmas; the difference is how inputs are
+declared. ClickHouse spells a parameter `{name:Type}` with the type written by
+hand, so there is no `pggen.arg()` and no type to infer — and a query file stays
+something you can paste straight into `clickhouse-client`.
+
+```sql
+-- name: FindDataUsage :many
+SELECT a_num AS msisdn, sum(units) AS data_bytes
+FROM cdr
+WHERE a_num IN {msisdns:Array(String)}
+  AND start_date >= {from:DateTime}
+GROUP BY a_num;
+```
+
+```bash
+chgen gen go \
+    --schema-glob schema.sql \
+    --query-glob 'cdr/*.sql'
+```
+
+```go
+type FindDataUsageParams struct {
+    Msisdns []string  `json:"msisdns"`
+    From    time.Time `json:"from"`
+}
+
+type FindDataUsageRow struct {
+    Msisdn    string `ch:"msisdn"     json:"msisdn"`
+    DataBytes int64  `ch:"data_bytes" json:"data_bytes"`
+}
+
+func (q *DBQuerier) FindDataUsage(
+    ctx context.Context,
+    params FindDataUsageParams,
+) ([]FindDataUsageRow, error) {
+    /* omitted */
+}
+```
+
+Two things differ from the Postgres output, both because ClickHouse does:
+
+- **Nullability is exact, not guessed.** ClickHouse puts it in the type —
+  `Nullable(String)` — so `chgen` reads it off `DESCRIBE` rather than inferring
+  it from the query plan. Watch out for one asymmetry with Postgres: with
+  `join_use_nulls` off, the default, a `LEFT JOIN` does *not* make the right
+  side's columns nullable, because unmatched rows get type defaults instead of
+  NULL.
+- **There is no batch interface.** ClickHouse has no query pipelining, so there
+  are no `XBatch`/`XScan` methods. A `:many` query is a single `conn.Select`.
+- **Enums map to `string`.** Unlike a Postgres enum, a ClickHouse enum is
+  anonymous — the labels *are* the type — so there is no name to give the
+  generated Go type. Use `--go-type` to map a particular enum to something
+  richer:
+
+  ```shell
+  chgen gen go --query-glob 'cdr/*.sql' \
+      --go-type "Enum8('MOC' = 1, 'GPRS' = 7)=example.com/cdr.RecordType"
+  ```
+
+  Note what the target has to be. clickhouse-go decodes into the Go type a
+  column maps to natively, or into a `sql.Scanner`, **and into nothing else**.
+  A plain named type compiles and then fails at run time with `converting
+  Enum8 to *cdr.RecordType is unsupported`, so an override that is only a
+  rename does not work here. `example/clickhouse_multi` shows the form that
+  does.
+
+`chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
+supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.
+
+An `:exec` query is checked less thoroughly than the rest. ClickHouse will only
+analyse a query it can run as a `SELECT`, so an `INSERT` is parsed rather than
+resolved: a malformed one fails at generation, but one naming a column that
+does not exist fails when your application runs it.
+
 ## Pitch
 
 Why should you use `pggen` instead of the [myriad] of Go SQL bindings?

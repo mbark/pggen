@@ -8,7 +8,6 @@ import (
 	goscan "go/scanner"
 	gotok "go/token"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -31,9 +30,12 @@ type parser struct {
 	pos gotok.Pos   // token position
 	tok token.Token // one token look-ahead
 	lit string      // token literal
+
+	// How to spell a query parameter in the target dialect.
+	placeholder Placeholder
 }
 
-func (p *parser) init(fset *gotok.FileSet, filename string, src []byte, mode Mode) {
+func (p *parser) init(fset *gotok.FileSet, filename string, src []byte, mode Mode, ph Placeholder) {
 	p.file = fset.AddFile(filename, -1, len(src))
 	eh := func(pos gotok.Position, msg string) { p.errors.Add(pos, msg) }
 	p.scanner.Init(p.file, src, eh)
@@ -41,6 +43,10 @@ func (p *parser) init(fset *gotok.FileSet, filename string, src []byte, mode Mod
 
 	p.mode = mode
 	p.trace = mode&Trace != 0 // for convenience (p.trace is used frequently)
+	p.placeholder = ph
+	if p.placeholder == nil {
+		p.placeholder = PostgresPlaceholder
+	}
 
 	p.next() // parse overall doc comments
 }
@@ -260,7 +266,7 @@ func (p *parser) parseQuery() ast.Query {
 	}
 
 	templateSQL := sql.String()
-	preparedSQL, params := prepareSQL(templateSQL, names)
+	preparedSQL, params := prepareSQL(templateSQL, names, p.placeholder)
 
 	return &ast.SourceQuery{
 		Name:        annotations[1],
@@ -389,9 +395,10 @@ func (p *parser) parsePggenArg() (argPos, bool) {
 	return argPos{lo: lo, hi: hi, name: name}, true
 }
 
-// prepareSQL replaces each pggen.arg with the $n, respecting the order that the
-// arg first appeared. Args with the same name use the same $n.
-func prepareSQL(sql string, args []argPos) (string, []string) {
+// prepareSQL replaces each pggen.arg with the dialect's placeholder for that
+// param, respecting the order that the arg first appeared. Args with the same
+// name reuse the same placeholder.
+func prepareSQL(sql string, args []argPos, ph Placeholder) (string, []string) {
 	if len(args) == 0 {
 		return sql, nil
 	}
@@ -415,8 +422,7 @@ func prepareSQL(sql string, args []argPos) (string, []string) {
 	prev := 0
 	for _, arg := range args {
 		sb.Write(bs[prev:arg.lo])
-		sb.WriteByte('$')
-		sb.WriteString(strconv.Itoa(paramOrders[arg.name]))
+		sb.WriteString(ph(arg.name, paramOrders[arg.name]))
 		prev = arg.hi
 	}
 	sb.Write(bs[prev:])

@@ -2,15 +2,15 @@ package golang
 
 import (
 	"fmt"
-	"github.com/mbark/pggen/internal/casing"
-	"github.com/mbark/pggen/internal/codegen"
-	"github.com/mbark/pggen/internal/codegen/golang/gotype"
-	"github.com/mbark/pggen/internal/gomod"
-	"github.com/mbark/pggen/internal/pginfer"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/mbark/pggen/internal/casing"
+	"github.com/mbark/pggen/internal/codegen"
+	"github.com/mbark/pggen/internal/codegen/golang/gotype"
+	"github.com/mbark/pggen/internal/gomod"
 )
 
 // Templater creates query file templates.
@@ -19,6 +19,7 @@ type Templater struct {
 	resolver         TypeResolver
 	pkg              string // Go package name
 	inlineParamCount int
+	dialect          codegen.Dialect
 }
 
 // TemplaterOpts is options to control the template logic.
@@ -28,6 +29,8 @@ type TemplaterOpts struct {
 	Pkg      string // Go package name
 	// How many params to inline when calling querier methods.
 	InlineParamCount int
+	// Which database the generated code talks to.
+	Dialect codegen.Dialect
 }
 
 func NewTemplater(opts TemplaterOpts) Templater {
@@ -36,6 +39,7 @@ func NewTemplater(opts TemplaterOpts) Templater {
 		caser:            opts.Caser,
 		resolver:         opts.Resolver,
 		inlineParamCount: opts.InlineParamCount,
+		dialect:          opts.Dialect,
 	}
 }
 
@@ -69,7 +73,10 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 	}
 
 	// If there are composite or enum types, add a RegisterTypes declarer.
-	if len(pgTypeNames) > 0 {
+	// RegisterTypes calls pgx's conn.LoadTypes, which ClickHouse has no
+	// equivalent of: clickhouse-go binds complex types by struct tag rather
+	// than registering them on the connection.
+	if len(pgTypeNames) > 0 && tm.dialect != codegen.DialectClickHouse {
 		names := make([]string, 0, len(pgTypeNames))
 		for name := range pgTypeNames {
 			names = append(names, name)
@@ -87,22 +94,28 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 	// Add declarers to leader file.
 	goQueryFiles[firstIndex].Declarers = allDeclarers.ListAll()
 
-	// Remove unneeded pgconn import if possible.
+	// Drop imports a file turned out not to need. genericConn covers the whole
+	// package, so its method set is read from every file, not just this one —
+	// and Pkg is not linked up until after templating.
+	chMethods := chConnMethodsOf(goQueryFiles)
 	for i, file := range goQueryFiles {
-		if file.needsPgconnImport() {
+		if file.Dialect == codegen.DialectClickHouse {
+			if !file.needsClickHouseImport() {
+				goQueryFiles[i].Imports = removeImport(goQueryFiles[i].Imports,
+					"github.com/ClickHouse/clickhouse-go/v2")
+			}
+			// driver.Rows and driver.Row are named only by genericConn, which
+			// only the leader declares — and only for the methods the
+			// package's queries call.
+			if !file.IsLeader || !chMethods.needsDriverPkg() {
+				goQueryFiles[i].Imports = removeImport(goQueryFiles[i].Imports,
+					"github.com/ClickHouse/clickhouse-go/v2/lib/driver")
+			}
 			continue
 		}
-		pgconnIdx := -1
-		imports := file.Imports
-		for j, imp := range imports {
-			if imp.PkgPath == "github.com/jackc/pgx/v5/pgconn" {
-				pgconnIdx = j
-				break
-			}
-		}
-		if pgconnIdx > -1 {
-			copy(imports[pgconnIdx:], imports[pgconnIdx+1:])
-			goQueryFiles[i].Imports = imports[:len(imports)-1]
+		if !file.needsPgconnImport() {
+			goQueryFiles[i].Imports = removeImport(goQueryFiles[i].Imports,
+				"github.com/jackc/pgx/v5/pgconn")
 		}
 	}
 
@@ -136,8 +149,13 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 	imports := NewImportSet()
 	imports.AddPackage("context")
 	imports.AddPackage("fmt")
-	imports.AddPackage("github.com/jackc/pgx/v5/pgconn")
-	imports.AddPackage("github.com/jackc/pgx/v5")
+	if tm.dialect == codegen.DialectClickHouse {
+		imports.AddPackage("github.com/ClickHouse/clickhouse-go/v2")
+		imports.AddPackage("github.com/ClickHouse/clickhouse-go/v2/lib/driver")
+	} else {
+		imports.AddPackage("github.com/jackc/pgx/v5/pgconn")
+		imports.AddPackage("github.com/jackc/pgx/v5")
+	}
 
 	pkgPath := ""
 	// NOTE: err == nil check
@@ -151,7 +169,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 
 	// First pass: resolve all types and collect imports.
 	type queryData struct {
-		query   pginfer.TypedQuery
+		query   codegen.TypedQuery
 		doc     string
 		inputs  []gotype.Type
 		outputs []gotype.Type
@@ -179,26 +197,28 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 
 		inputTypes := make([]gotype.Type, len(query.Inputs))
 		for i, input := range query.Inputs {
-			goType, err := tm.resolver.Resolve(input.PgType, false, pkgPath)
+			goType, err := tm.resolver.Resolve(input.Type, false, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, nil, err
+				return TemplatedFile{}, nil, nil, fmt.Errorf(
+					"query %s, parameter %s: %w", query.Name, input.PgName, err)
 			}
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
 			inputTypes[i] = goType
-			declarers.AddAll(FindInputDeclarers(goType).ListAll()...)
+			declarers.AddAll(FindDeclarers(goType).ListAll()...)
 		}
 
 		outputTypes := make([]gotype.Type, len(query.Outputs))
 		for i, out := range query.Outputs {
-			goType, err := tm.resolver.Resolve(out.PgType, out.Nullable, pkgPath)
+			goType, err := tm.resolver.Resolve(out.Type, out.Nullable, pkgPath)
 			if err != nil {
-				return TemplatedFile{}, nil, nil, err
+				return TemplatedFile{}, nil, nil, fmt.Errorf(
+					"query %s, output column %s: %w", query.Name, out.PgName, err)
 			}
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
 			outputTypes[i] = goType
-			declarers.AddAll(FindOutputDeclarers(goType).ListAll()...)
+			declarers.AddAll(FindDeclarers(goType).ListAll()...)
 		}
 
 		queryDatas = append(queryDatas, queryData{
@@ -240,6 +260,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 		}
 
 		tq := TemplatedQuery{
+			Dialect:          tm.dialect,
 			Name:             tm.caser.ToUpperGoIdent(qd.query.Name),
 			SQLVarName:       tm.caser.ToLowerGoIdent(qd.query.Name) + "SQL",
 			ResultKind:       qd.query.ResultKind,
@@ -283,6 +304,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 	}
 
 	return TemplatedFile{
+		Dialect:        tm.dialect,
 		PkgPath:        pkgPath,
 		GoPkg:          tm.pkg,
 		SourcePath:     file.SourcePath,
@@ -483,7 +505,7 @@ func (tm Templater) buildSharedRowDeclarers(files []TemplatedFile) ([]Declarer, 
 			merged[i] = col
 		}
 
-		declarers = append(declarers, NewSharedRowDeclarer(outputType, merged))
+		declarers = append(declarers, NewSharedRowDeclarer(outputType, merged, tm.dialect))
 	}
 
 	return declarers, nil
@@ -495,4 +517,15 @@ func unwrapPointer(t gotype.Type) gotype.Type {
 		return pt.Elem
 	}
 	return t
+}
+
+// removeImport returns imports without pkgPath, preserving order.
+func removeImport(imports []ImportPkg, pkgPath string) []ImportPkg {
+	for i, imp := range imports {
+		if imp.PkgPath == pkgPath {
+			copy(imports[i:], imports[i+1:])
+			return imports[:len(imports)-1]
+		}
+	}
+	return imports
 }

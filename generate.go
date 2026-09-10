@@ -4,19 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	gotok "go/token"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/jackc/pgx/v5"
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/ch"
+	"github.com/mbark/pggen/internal/chdocker"
+	"github.com/mbark/pggen/internal/chinfer"
 	"github.com/mbark/pggen/internal/codegen"
 	"github.com/mbark/pggen/internal/codegen/golang"
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/parser"
 	"github.com/mbark/pggen/internal/pgdocker"
 	"github.com/mbark/pggen/internal/pginfer"
-	gotok "go/token"
-	"log/slog"
-	"os"
-	"path/filepath"
-	"time"
 )
 
 // Lang is a supported codegen language.
@@ -26,10 +32,30 @@ const (
 	LangGo Lang = "go"
 )
 
+// Dialect is a supported database backend. It is orthogonal to Lang: Lang
+// picks the language of the generated code, Dialect picks the database the
+// queries run against and therefore how their types are inferred.
+type Dialect = codegen.Dialect
+
+const (
+	DialectPostgres   = codegen.DialectPostgres
+	DialectClickHouse = codegen.DialectClickHouse
+)
+
+// Inferrer turns a parsed query into a typed query by asking the database
+// about the query's parameter and result types. Each dialect has its own
+// implementation: pginfer prepares the query and reads Postgres OIDs back,
+// chinfer reads ClickHouse type names out of DESCRIBE.
+type Inferrer interface {
+	InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, error)
+}
+
 // GenerateOptions are the unparsed options that controls the generated Go code.
 type GenerateOptions struct {
 	// What language to generate code in.
 	Language Lang
+	// Which database the queries run against. Defaults to DialectPostgres.
+	Dialect Dialect
 	// The connection string to the running Postgres database to use to get type
 	// information for each query in QueryFiles.
 	//
@@ -79,19 +105,21 @@ func Generate(opts GenerateOptions) (mErr error) {
 	if opts.OutputDir == "" {
 		return fmt.Errorf("output dir must be set")
 	}
+	if opts.Dialect == "" {
+		opts.Dialect = DialectPostgres
+	}
 
-	// Postgres connection.
+	// Database connection.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	pgConn, errEnricher, cleanup, err := connectPostgres(ctx, opts)
+	inferrer, errEnricher, cleanup, err := connectInferrer(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("connect postgres: %w", err)
+		return err
 	}
-	defer errs.Capture(&mErr, cleanup, "close postgres connection")
+	defer errs.Capture(&mErr, cleanup, "close database connection")
 
 	// Parse queries.
-	inferrer := pginfer.NewInferrer(pgConn)
-	queryFiles, err := parseQueryFiles(opts.QueryFiles, inferrer)
+	queryFiles, err := parseQueryFiles(opts.QueryFiles, inferrer, opts.Dialect)
 	if err != nil {
 		return errEnricher(err)
 	}
@@ -106,6 +134,7 @@ func Generate(opts GenerateOptions) (mErr error) {
 	switch opts.Language {
 	case LangGo:
 		goOpts := golang.GenerateOptions{
+			Dialect:          opts.Dialect,
 			GoPkg:            opts.GoPackage,
 			OutputDir:        opts.OutputDir,
 			Acronyms:         opts.Acronyms,
@@ -121,70 +150,188 @@ func Generate(opts GenerateOptions) (mErr error) {
 	return nil
 }
 
+// connectInferrer connects to the database for opts.Dialect and returns an
+// Inferrer backed by it, along with an error enricher and a cleanup func.
+func connectInferrer(ctx context.Context, opts GenerateOptions) (Inferrer, func(error) error, func() error, error) {
+	switch opts.Dialect {
+	case DialectPostgres:
+		pgConn, errEnricher, cleanup, err := connectPostgres(ctx, opts)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("connect postgres: %w", err)
+		}
+		return pginfer.NewInferrer(pgConn), errEnricher, cleanup, nil
+	case DialectClickHouse:
+		conn, cleanup, err := connectClickHouse(ctx, opts)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("connect clickhouse: %w", err)
+		}
+		return chinfer.NewInferrer(conn), func(e error) error { return e }, cleanup, nil
+	default:
+		return nil, nil, nil, fmt.Errorf("unsupported dialect %q", opts.Dialect)
+	}
+}
+
+// connectClickHouse connects to ClickHouse using connString if given, or by
+// running a Docker ClickHouse container and connecting to that. Schema files
+// are loaded before any query is inferred.
+func connectClickHouse(ctx context.Context, opts GenerateOptions) (driver.Conn, func() error, error) {
+	connString := opts.ConnString
+	stop := func() error { return nil }
+	if connString == "" {
+		client, err := chdocker.Start(ctx, opts.SchemaFiles)
+		if err != nil {
+			return nil, nil, fmt.Errorf("start dockerized clickhouse: %w", err)
+		}
+		stop = func() error { return client.Stop(ctx) }
+		connString = client.ConnString()
+	}
+
+	chOpts, err := clickhouse.ParseDSN(connString)
+	if err != nil {
+		_ = stop()
+		return nil, nil, fmt.Errorf("parse clickhouse connection string: %w", err)
+	}
+	conn, err := clickhouse.Open(chOpts)
+	if err != nil {
+		_ = stop()
+		return nil, nil, fmt.Errorf("open clickhouse connection: %w", err)
+	}
+
+	// clickhouse.Open is lazy and does not dial, so the connection exists —
+	// with its pool and background goroutines — from here on, whether or not
+	// the server ever answers. Every failure below has to close it as well as
+	// stop the container.
+	cleanup := func() error {
+		closeErr := conn.Close()
+		if stopErr := stop(); stopErr != nil {
+			return stopErr
+		}
+		return closeErr
+	}
+
+	if err := conn.Ping(ctx); err != nil {
+		_ = cleanup()
+		return nil, nil, fmt.Errorf("ping clickhouse: %w", err)
+	}
+
+	// With an external connection, load the schema files ourselves; the Docker
+	// path has already run them as init scripts.
+	if opts.ConnString != "" {
+		if err := loadClickHouseSchemas(ctx, conn, opts.SchemaFiles); err != nil {
+			_ = cleanup()
+			return nil, nil, err
+		}
+	}
+
+	return conn, cleanup, nil
+}
+
+// loadClickHouseSchemas runs each schema file against conn. ClickHouse runs
+// one statement per call, so the files are split on semicolons.
+func loadClickHouseSchemas(ctx context.Context, conn driver.Conn, schemaFiles []string) error {
+	for _, file := range schemaFiles {
+		if filepath.Ext(file) != ".sql" {
+			return fmt.Errorf("clickhouse schema file %s must be a .sql file", file)
+		}
+		bs, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read clickhouse schema file %s: %w", file, err)
+		}
+		for _, stmt := range ch.SplitStatements(string(bs)) {
+			if err := conn.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("run clickhouse schema file %s: %w", file, err)
+			}
+		}
+	}
+	return nil
+}
+
 // connectPostgres connects to postgres using connString if given or by
 // running a Docker postgres container and connecting to that.
+//
+// The returned cleanup closes the connection and stops the container, so every
+// failure below has to run it rather than leave either behind.
 func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func(error) error, func() error, error) {
-	// Create connection by starting dockerized Postgres.
-	if opts.ConnString == "" {
+	connString := opts.ConnString
+	stop := func() error { return nil }
+	errEnricher := func(e error) error { return e }
+
+	if connString == "" {
 		client, err := pgdocker.Start(ctx, opts.SchemaFiles)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("start dockerized postgres: %w", err)
 		}
-		stopDocker := func() error { return client.Stop(ctx) }
-		connStr, err := client.ConnString()
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("get dockerized postgres conn string: %w", err)
-		}
-		pgConn, err := pgx.Connect(ctx, connStr)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("connect to pggen dockerized postgres database: %w", err)
-		}
-		errEnricher := func(e error) error {
+		stop = func() error { return client.Stop(ctx) }
+		errEnricher = func(e error) error {
 			if e == nil {
-				return e
+				return nil
 			}
-			logs, err := client.GetContainerLogs()
-			if err != nil {
-				return errors.Join(e, err)
+			logs, logErr := client.GetContainerLogs()
+			if logErr != nil {
+				return errors.Join(e, logErr)
 			}
 			return fmt.Errorf("container logs for Postgres container:\n\n%s\n\n%w", logs, e)
 		}
-		return pgConn, errEnricher, stopDocker, nil
-	}
-	// Use existing Postgres.
-	nopCleanup := func() error { return nil }
-	nopErrEnricher := func(e error) error { return e }
-	pgConn, err := pgx.Connect(ctx, opts.ConnString)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("connect to pggen postgres database: %w", err)
-	}
-	// Run SQL init scripts. pgdocker runs these in the other case by copying
-	// the files into the entrypoint folder. Emulate the behavior for a subset of
-	// supported files.
-	for _, script := range opts.SchemaFiles {
-		if filepath.Ext(script) != ".sql" {
-			return nil, nopErrEnricher, nopCleanup, fmt.Errorf("cannot run non-sql schema file on Postgres "+
-				"(*.sh and *.sql.gz files only supported without --postgres-connection): %s", script)
-		}
-		bs, err := os.ReadFile(script)
+		connString, err = client.ConnString()
 		if err != nil {
-			return nil, nil, nopCleanup, fmt.Errorf("read schema file: %w", err)
-		}
-		if _, err := pgConn.Exec(ctx, string(bs)); err != nil {
-			return nil, nopErrEnricher, nopCleanup, fmt.Errorf("load schema file into Postgres: %w", err)
+			_ = stop()
+			return nil, nil, nil, errEnricher(fmt.Errorf("get dockerized postgres conn string: %w", err))
 		}
 	}
-	return pgConn, nopErrEnricher, nopCleanup, nil
+
+	pgConn, err := pgx.Connect(ctx, connString)
+	if err != nil {
+		_ = stop()
+		return nil, nil, nil, errEnricher(fmt.Errorf("connect to pggen postgres database: %w", err))
+	}
+	cleanup := func() error {
+		closeErr := pgConn.Close(ctx)
+		if stopErr := stop(); stopErr != nil {
+			return stopErr
+		}
+		return closeErr
+	}
+
+	// With an external connection, load the schema files ourselves; the Docker
+	// path has already run them as init scripts.
+	if opts.ConnString != "" {
+		if err := loadPostgresSchemas(ctx, pgConn, opts.SchemaFiles); err != nil {
+			_ = cleanup()
+			return nil, nil, nil, err
+		}
+	}
+
+	return pgConn, errEnricher, cleanup, nil
 }
 
-func parseQueryFiles(queryFiles []string, inferrer *pginfer.Inferrer) ([]codegen.QueryFile, error) {
+// loadPostgresSchemas runs each schema file against conn. pgdocker runs these
+// by copying the files into the container's entrypoint folder, which supports
+// more file types than a plain connection can.
+func loadPostgresSchemas(ctx context.Context, conn *pgx.Conn, schemaFiles []string) error {
+	for _, file := range schemaFiles {
+		if filepath.Ext(file) != ".sql" {
+			return fmt.Errorf("cannot run non-sql schema file on Postgres "+
+				"(*.sh and *.sql.gz files only supported without --postgres-connection): %s", file)
+		}
+		bs, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read schema file %s: %w", file, err)
+		}
+		if _, err := conn.Exec(ctx, string(bs)); err != nil {
+			return fmt.Errorf("load schema file %s into Postgres: %w", file, err)
+		}
+	}
+	return nil
+}
+
+func parseQueryFiles(queryFiles []string, inferrer Inferrer, dialect Dialect) ([]codegen.QueryFile, error) {
 	files := make([]codegen.QueryFile, len(queryFiles))
 	for i, file := range queryFiles {
 		srcPath, err := filepath.Abs(file)
 		if err != nil {
 			return nil, fmt.Errorf("resolve absolute path for %q: %w", file, err)
 		}
-		queryFile, err := parseQueries(srcPath, inferrer)
+		queryFile, err := parseQueries(srcPath, inferrer, dialect)
 		if err != nil {
 			return nil, fmt.Errorf("parse template query file %q: %w", file, err)
 		}
@@ -193,8 +340,12 @@ func parseQueryFiles(queryFiles []string, inferrer *pginfer.Inferrer) ([]codegen
 	return files, nil
 }
 
-func parseQueries(srcPath string, inferrer *pginfer.Inferrer) (codegen.QueryFile, error) {
-	astFile, err := parser.ParseFile(gotok.NewFileSet(), srcPath, nil, 0)
+func parseQueries(srcPath string, inferrer Inferrer, dialect Dialect) (codegen.QueryFile, error) {
+	placeholder := parser.PostgresPlaceholder
+	if dialect == DialectClickHouse {
+		placeholder = parser.ClickHousePlaceholder
+	}
+	astFile, err := parser.ParseFileDialect(gotok.NewFileSet(), srcPath, nil, 0, placeholder)
 	if err != nil {
 		return codegen.QueryFile{}, fmt.Errorf("parse query file %q: %w", srcPath, err)
 	}
@@ -210,6 +361,13 @@ func parseQueries(srcPath string, inferrer *pginfer.Inferrer) (codegen.QueryFile
 			if _, ok := seenNames[query.Name]; ok {
 				return codegen.QueryFile{}, fmt.Errorf("duplicate query name %s", query.Name)
 			}
+			if dialect == DialectClickHouse && len(query.ParamNames) > 0 {
+				return codegen.QueryFile{}, fmt.Errorf(
+					"query %s uses pggen.arg(%q), which pggen does not support for ClickHouse; "+
+						"declare the parameter natively instead, like {%s:String}, "+
+						"since ClickHouse parameters carry their own type",
+					query.Name, query.ParamNames[0], query.ParamNames[0])
+			}
 			seenNames[query.Name] = struct{}{}
 			srcQueries = append(srcQueries, query)
 		default:
@@ -218,7 +376,7 @@ func parseQueries(srcPath string, inferrer *pginfer.Inferrer) (codegen.QueryFile
 	}
 
 	// Infer types.
-	queries := make([]pginfer.TypedQuery, 0, len(astFile.Queries))
+	queries := make([]codegen.TypedQuery, 0, len(astFile.Queries))
 	for _, srcQuery := range srcQueries {
 		typedQuery, err := inferrer.InferTypes(srcQuery)
 		if err != nil {

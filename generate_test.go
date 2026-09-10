@@ -39,8 +39,7 @@ func TestGenerate_Golang_Error(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn, cleanupFunc := pgtest.NewPostgresSchemaString(t, tt.schema)
-			defer cleanupFunc()
+			conn := pgtest.NewPostgresSchemaString(t, tt.schema)
 			tmpDir := t.TempDir()
 			queryFile := filepath.Join(tmpDir, "query.sql")
 			err := os.WriteFile(queryFile, []byte(tt.queries), 0644)

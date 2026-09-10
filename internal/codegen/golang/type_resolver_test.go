@@ -19,10 +19,10 @@ func TestTypeResolver_Resolve(t *testing.T) {
 	caser.AddAcronym("id", "ID")
 	pgDeviceEnum := pg.EnumType{Name: "device_type", Labels: []string{"macos", "ios", "web"}}
 	goDeviceEnum := &gotype.EnumType{
-		PgEnum: pgDeviceEnum,
-		Name:   "DeviceType",
-		Labels: []string{"DeviceTypeMacOS", "DeviceTypeIOS", "DeviceTypeWeb"},
-		Values: []string{"macos", "ios", "web"},
+		SQLName: pgDeviceEnum.Name,
+		Name:    "DeviceType",
+		Labels:  []string{"DeviceTypeMacOS", "DeviceTypeIOS", "DeviceTypeWeb"},
+		Values:  []string{"macos", "ios", "web"},
 	}
 	tests := []struct {
 		name      string
@@ -40,7 +40,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			name:   "enum array",
 			pgType: pg.ArrayType{Name: "_device_type", Elem: pgDeviceEnum},
 			want: &gotype.ArrayType{
-				PgArray: pg.ArrayType{Name: "_device_type", Elem: pgDeviceEnum},
+				SQLName: "_device_type",
 				Elem:    &gotype.ImportType{PkgPath: testPkgPath, Type: goDeviceEnum},
 			},
 		},
@@ -55,7 +55,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:    pg.BaseType{Name: "custom_type"},
 			want: &gotype.ImportType{
 				PkgPath: "example.com/custom",
-				Type:    &gotype.OpaqueType{PgType: pg.BaseType{Name: "custom_type"}, Name: "QualType"},
+				Type:    &gotype.OpaqueType{Name: "QualType"},
 			},
 		},
 		{
@@ -65,7 +65,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			want: &gotype.PointerType{
 				Elem: &gotype.ImportType{
 					PkgPath: "example.com/custom",
-					Type:    &gotype.OpaqueType{PgType: pg.BaseType{Name: "custom_type"}, Name: "QualType"},
+					Type:    &gotype.OpaqueType{Name: "QualType"},
 				},
 			},
 		},
@@ -74,7 +74,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			overrides: map[string]string{"_custom_type": "[]*example.com/custom.QualType"},
 			pgType:    pg.ArrayType{Name: "_custom_type", Elem: pg.BaseType{Name: "custom_type"}},
 			want: &gotype.ArrayType{
-				PgArray: pg.ArrayType{Name: "_custom_type", Elem: pg.BaseType{Name: "custom_type"}},
+				SQLName: "_custom_type",
 				Elem: &gotype.PointerType{
 					Elem: &gotype.ImportType{
 						PkgPath: "example.com/custom",
@@ -89,10 +89,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			nullable: false,
 			want: &gotype.ImportType{
 				PkgPath: "github.com/jackc/pgx/v5/pgtype",
-				Type: &gotype.OpaqueType{
-					PgType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
-					Name:   "Point",
-				},
+				Type:    &gotype.OpaqueType{Name: "Point"},
 			},
 		},
 		{
@@ -101,10 +98,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			nullable: true,
 			want: &gotype.ImportType{
 				PkgPath: "github.com/jackc/pgx/v5/pgtype",
-				Type: &gotype.OpaqueType{
-					PgType: pg.BaseType{Name: "point", ID: pgtype.PointOID},
-					Name:   "Point",
-				},
+				Type:    &gotype.OpaqueType{Name: "Point"},
 			},
 		},
 		{
@@ -113,10 +107,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:    pg.BaseType{Name: "int8", ID: pgtype.Int8OID},
 			want: &gotype.ImportType{
 				PkgPath: "example.com/custom",
-				Type: &gotype.OpaqueType{
-					PgType: pg.BaseType{Name: "int8", ID: pgtype.Int8OID},
-					Name:   "QualType",
-				},
+				Type:    &gotype.OpaqueType{Name: "QualType"},
 			},
 		},
 		{
@@ -124,7 +115,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			overrides: map[string]string{"_bigint": "[]uint16"},
 			pgType:    pg.ArrayType{Name: "_int8", Elem: pg.BaseType{Name: "int8", ID: pgtype.Int8OID}},
 			want: &gotype.ArrayType{
-				PgArray: pg.ArrayType{Name: "_int8", Elem: pg.BaseType{Name: "int8", ID: pgtype.Int8OID}},
+				SQLName: "_int8",
 				Elem:    &gotype.OpaqueType{Name: "uint16"},
 			},
 		},
@@ -133,7 +124,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			overrides: map[string]string{"_real": "[]example.com/custom.F32"},
 			pgType:    pg.ArrayType{ID: pgtype.Float4ArrayOID, Name: "_float4", Elem: pg.BaseType{Name: "_float4", ID: pgtype.Float4OID}},
 			want: &gotype.ArrayType{
-				PgArray: pg.ArrayType{ID: pgtype.Float4ArrayOID, Name: "_float4", Elem: pg.BaseType{Name: "_float4", ID: pgtype.Float4OID}},
+				SQLName: "_float4",
 				Elem: &gotype.ImportType{
 					PkgPath: "example.com/custom",
 					Type:    &gotype.OpaqueType{Name: "F32"},
@@ -145,7 +136,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			pgType:   pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
 			nullable: false,
 			want: &gotype.ArrayType{
-				PgArray: pg.ArrayType{ID: pgtype.DateArrayOID, Name: "_date", Elem: pg.BaseType{Name: "date", ID: pgtype.DateOID}},
+				SQLName: "_date",
 				Elem: &gotype.ImportType{
 					PkgPath: "github.com/jackc/pgx/v5/pgtype",
 					Type:    &gotype.OpaqueType{Name: "Date"},
@@ -171,16 +162,13 @@ func TestTypeResolver_Resolve(t *testing.T) {
 			want: &gotype.ImportType{
 				PkgPath: testPkgPath,
 				Type: &gotype.CompositeType{
-					PgComposite: pg.CompositeType{
-						Name:        "qux",
-						ColumnNames: []string{"id", "foo"},
-						ColumnTypes: []pg.Type{pg.Text, pg.Int8},
-					},
-					Name:       "Qux",
-					FieldNames: []string{"ID", "Foo"},
+					SQLName:        "qux",
+					SQLColumnNames: []string{"id", "foo"},
+					Name:           "Qux",
+					FieldNames:     []string{"ID", "Foo"},
 					FieldTypes: []gotype.Type{
-						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string", PgType: pg.Text}},
-						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int", PgType: pg.Int8}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int"}},
 					},
 				},
 			},
@@ -188,7 +176,7 @@ func TestTypeResolver_Resolve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resolver := NewTypeResolver(caser, tt.overrides)
+			resolver := NewPgTypeResolver(caser, tt.overrides)
 			got, err := resolver.Resolve(tt.pgType, tt.nullable, testPkgPath)
 			if err != nil {
 				t.Fatal(err)
@@ -210,7 +198,7 @@ func TestType_QualifyRel(t *testing.T) {
 		{
 			typ: gotype.NewEnumType(
 				"example.com/foo",
-				pg.EnumType{Name: "device", Labels: []string{"macos"}},
+				"device", []string{"macos"},
 				caser,
 			),
 			otherPkgPath: "example.com/bar",
@@ -219,31 +207,31 @@ func TestType_QualifyRel(t *testing.T) {
 		{
 			typ: gotype.NewEnumType(
 				"example.com/bar",
-				pg.EnumType{Name: "device", Labels: []string{"macos"}},
+				"device", []string{"macos"},
 				caser,
 			),
 			otherPkgPath: "example.com/bar",
 			want:         "Device",
 		},
 		{
-			typ:          gotype.MustParseOpaqueType("example.com/bar.Baz"),
+			typ:          gotype.MustParseKnownType("example.com/bar.Baz"),
 			otherPkgPath: "example.com/bar",
 			want:         "Baz",
 		},
 		{
-			typ:          gotype.MustParseKnownType("string", pg.Text),
+			typ:          gotype.MustParseKnownType("string"),
 			otherPkgPath: "example.com/bar",
 			want:         "string",
 		},
 		{
-			typ:          gotype.MustParseKnownType("string", pg.Text),
+			typ:          gotype.MustParseKnownType("string"),
 			otherPkgPath: "",
 			want:         "string",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.typ.Import()+"."+tt.typ.BaseName(), func(t *testing.T) {
-			got := gotype.QualifyType(tt.typ, tt.otherPkgPath)
+			got := gotype.QualifyType(tt.typ, tt.otherPkgPath, nil)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -251,7 +239,7 @@ func TestType_QualifyRel(t *testing.T) {
 
 func TestCreateCompositeType(t *testing.T) {
 	caser := casing.NewCaser()
-	resolver := NewTypeResolver(caser, nil)
+	resolver := NewPgTypeResolver(caser, nil)
 	tests := []struct {
 		pkgPath string
 		pgType  pg.CompositeType
@@ -267,16 +255,13 @@ func TestCreateCompositeType(t *testing.T) {
 			want: &gotype.ImportType{
 				PkgPath: "example.com/foo",
 				Type: &gotype.CompositeType{
-					PgComposite: pg.CompositeType{
-						Name:        "qux",
-						ColumnNames: []string{"one", "two_a"},
-						ColumnTypes: []pg.Type{pg.Text, pg.Int8},
-					},
-					Name:       "Qux",
-					FieldNames: []string{"One", "TwoA"},
+					SQLName:        "qux",
+					SQLColumnNames: []string{"one", "two_a"},
+					Name:           "Qux",
+					FieldNames:     []string{"One", "TwoA"},
 					FieldTypes: []gotype.Type{
-						&gotype.PointerType{Elem: &gotype.OpaqueType{PgType: pg.Text, Name: "string"}},
-						&gotype.PointerType{Elem: &gotype.OpaqueType{PgType: pg.Int8, Name: "int"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "string"}},
+						&gotype.PointerType{Elem: &gotype.OpaqueType{Name: "int"}},
 					},
 				},
 			},

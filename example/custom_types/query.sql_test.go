@@ -12,8 +12,7 @@ import (
 )
 
 func TestQuerier_CustomTypes(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	ctx := context.Background()
 
@@ -42,8 +41,7 @@ func TestQuerier_CustomTypes(t *testing.T) {
 }
 
 func TestQuerier_CustomMyInt(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	row := conn.QueryRow(context.Background(), texts.Dedent(`
 		SELECT pt.oid
 		FROM pg_type pt
@@ -83,8 +81,7 @@ func TestQuerier_CustomMyInt(t *testing.T) {
 }
 
 func TestQuerier_IntArray(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	q := NewQuerier(conn)
 	ctx := context.Background()
 

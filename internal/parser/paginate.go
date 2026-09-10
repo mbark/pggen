@@ -243,10 +243,10 @@ func (p *parser) expandPaginatedQueries(file *ast.File) {
 
 func (p *parser) fanOut(sq *ast.SourceQuery, spec *ast.SortSpec) ([]ast.Query, error) {
 	type variant struct {
-		key      ast.VariantKey
-		nameSfx  string
-		orderBy  string
-		keyset   string
+		key     ast.VariantKey
+		nameSfx string
+		orderBy string
+		keyset  string
 	}
 	var variants []variant
 

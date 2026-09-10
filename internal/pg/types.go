@@ -1,14 +1,17 @@
 package pg
 
 import (
-	"github.com/mbark/pggen/internal/pg/pgoid"
 	"strconv"
+
+	"github.com/mbark/pggen/internal/pg/pgoid"
+	"github.com/mbark/pggen/internal/sqltype"
 )
 
-// Type is a Postgres type.
+// Type is a Postgres type. Postgres identifies types by OID, so that's what
+// the sqltype.Type key is built from.
 type Type interface {
-	OID() uint32    // pg_type.oid: row identifier
-	String() string // pg_type.typname: data type name
+	sqltype.Type // String() reports pg_type.typname; Key() namespaces the OID
+	OID() uint32 // pg_type.oid: row identifier
 	Kind() TypeKind
 }
 
@@ -123,34 +126,53 @@ type (
 	}
 )
 
-func (b BaseType) OID() uint32 { return b.ID }
-func (b BaseType) String() string  { return b.Name }
-func (b BaseType) Kind() TypeKind  { return KindBaseType }
+func (b BaseType) OID() uint32    { return b.ID }
+func (b BaseType) String() string { return b.Name }
+func (b BaseType) Kind() TypeKind { return KindBaseType }
 
-func (b VoidType) OID() uint32 { return pgoid.Void }
-func (b VoidType) String() string  { return "void" }
-func (b VoidType) Kind() TypeKind  { return KindPseudoType }
+func (b VoidType) OID() uint32    { return pgoid.Void }
+func (b VoidType) String() string { return "void" }
+func (b VoidType) Kind() TypeKind { return KindPseudoType }
 
-func (b ArrayType) OID() uint32 { return b.ID }
-func (b ArrayType) String() string  { return b.Name }
-func (b ArrayType) Kind() TypeKind  { return KindBaseType }
+func (b ArrayType) OID() uint32    { return b.ID }
+func (b ArrayType) String() string { return b.Name }
+func (b ArrayType) Kind() TypeKind { return KindBaseType }
 
-func (e EnumType) OID() uint32 { return e.ID }
-func (e EnumType) String() string  { return e.Name }
-func (e EnumType) Kind() TypeKind  { return KindEnumType }
+func (e EnumType) OID() uint32    { return e.ID }
+func (e EnumType) String() string { return e.Name }
+func (e EnumType) Kind() TypeKind { return KindEnumType }
 
-func (e DomainType) OID() uint32 { return e.ID }
-func (e DomainType) String() string  { return e.Name }
-func (e DomainType) Kind() TypeKind  { return KindDomainType }
+func (e DomainType) OID() uint32    { return e.ID }
+func (e DomainType) String() string { return e.Name }
+func (e DomainType) Kind() TypeKind { return KindDomainType }
 
-func (e CompositeType) OID() uint32 { return e.ID }
-func (e CompositeType) String() string  { return e.Name }
-func (e CompositeType) Kind() TypeKind  { return KindCompositeType }
+func (e CompositeType) OID() uint32    { return e.ID }
+func (e CompositeType) String() string { return e.Name }
+func (e CompositeType) Kind() TypeKind { return KindCompositeType }
 
-func (e UnknownType) OID() uint32 { return e.ID }
-func (e UnknownType) String() string  { return e.Name }
-func (e UnknownType) Kind() TypeKind  { return e.PgKind }
+func (e UnknownType) OID() uint32    { return e.ID }
+func (e UnknownType) String() string { return e.Name }
+func (e UnknownType) Kind() TypeKind { return e.PgKind }
 
-func (p placeholderType) OID() uint32 { return p.ID }
-func (p placeholderType) String() string  { return "placeholder-" + strconv.Itoa(int(p.ID)) }
-func (p placeholderType) Kind() TypeKind  { return kindPlaceholderType }
+func (p placeholderType) OID() uint32    { return p.ID }
+func (p placeholderType) String() string { return "placeholder-" + strconv.Itoa(int(p.ID)) }
+func (p placeholderType) Kind() TypeKind { return kindPlaceholderType }
+
+// Key implements sqltype.Type. A Postgres type is identified by its OID.
+func (b BaseType) Key() string        { return oidKey(b.ID) }
+func (b VoidType) Key() string        { return oidKey(pgoid.Void) }
+func (b ArrayType) Key() string       { return oidKey(b.ID) }
+func (e EnumType) Key() string        { return oidKey(e.ID) }
+func (e DomainType) Key() string      { return oidKey(e.ID) }
+func (e CompositeType) Key() string   { return oidKey(e.ID) }
+func (e UnknownType) Key() string     { return oidKey(e.ID) }
+func (p placeholderType) Key() string { return oidKey(p.ID) }
+
+// oidKey namespaces an OID so a Postgres type identity can never collide with
+// another dialect's.
+func oidKey(oid uint32) string { return "pg:" + strconv.FormatUint(uint64(oid), 10) }
+
+// ElemType implements sqltype.ArrayType.
+func (b ArrayType) ElemType() sqltype.Type { return b.Elem }
+
+var _ sqltype.ArrayType = ArrayType{}
