@@ -187,8 +187,7 @@ func TestNewTypeFetcher(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn, cleanup := pgtest.NewPostgresSchemaString(t, tt.schema)
-			defer cleanup()
+			conn := pgtest.NewPostgresSchemaString(t, tt.schema)
 			querier := NewQuerier(conn)
 
 			// Act.

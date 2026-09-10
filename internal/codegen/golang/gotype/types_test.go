@@ -166,8 +166,52 @@ func TestQualifyType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := QualifyType(tt.typ, tt.otherPkg)
+			got := QualifyType(tt.typ, tt.otherPkg, nil)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestWalk(t *testing.T) {
+	// []map[string]*foo.Bar, which reaches a leaf through every wrapper.
+	leaf := &ImportType{PkgPath: "foo.com/qux", Type: &OpaqueType{Name: "Bar"}}
+	typ := &ArrayType{Elem: &MapType{
+		Key: &OpaqueType{Name: "string"},
+		Val: &PointerType{Elem: leaf},
+	}}
+
+	var got []string
+	Walk(typ, func(t Type) bool {
+		got = append(got, t.BaseName())
+		return true
+	})
+	assert.Equal(t, []string{
+		"[]map[string]*Bar", "map[string]*Bar", "string", "*Bar", "Bar", "Bar",
+	}, got, "every wrapper and both halves of the map are visited")
+
+	// Returning false prunes the types under the one that returned it.
+	var pruned []string
+	Walk(typ, func(t Type) bool {
+		pruned = append(pruned, t.BaseName())
+		_, isMap := t.(*MapType)
+		return !isMap
+	})
+	assert.Equal(t, []string{"[]map[string]*Bar", "map[string]*Bar"}, pruned)
+}
+
+func TestWalk_composite(t *testing.T) {
+	typ := &CompositeType{
+		Name:       "Order",
+		FieldNames: []string{"ID", "Placed"},
+		FieldTypes: []Type{
+			&OpaqueType{Name: "int32"},
+			&ImportType{PkgPath: "time", Type: &OpaqueType{Name: "Time"}},
+		},
+	}
+	var got []string
+	Walk(typ, func(t Type) bool {
+		got = append(got, t.BaseName())
+		return true
+	})
+	assert.Equal(t, []string{"Order", "int32", "Time", "Time"}, got)
 }

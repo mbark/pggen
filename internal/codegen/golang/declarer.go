@@ -42,72 +42,27 @@ func (d DeclarerSet) ListAll() []Declarer {
 	return decls
 }
 
-// FindInputDeclarers finds all necessary Declarers for types that appear in
-// the input parameters. Returns nil if no declarers are needed.
-func FindInputDeclarers(typ gotype.Type) DeclarerSet {
+// FindDeclarers finds all the Declarers needed by typ and the types nested
+// inside it. Returns an empty set if no declarations are needed.
+//
+// Input and output types ask the same question: pgx has to be told about a
+// composite or an enum whichever direction it travels in.
+func FindDeclarers(typ gotype.Type) DeclarerSet {
 	decls := NewDeclarerSet()
-	findInputDeclsHelper(typ, decls)
+	gotype.Walk(typ, func(typ gotype.Type) bool {
+		switch typ := typ.(type) {
+		case *gotype.CompositeType:
+			decls.AddAll(NewCompositeTypeDeclarer(typ))
+		case *gotype.EnumType:
+			decls.AddAll(NewEnumTypeDeclarer(typ))
+		case *gotype.ArrayType:
+			// pgx already knows how to translate an array of a builtin, so
+			// nothing under it needs declaring either.
+			return !gotype.IsPgxSupportedArray(typ)
+		}
+		return true
+	})
 	return decls
-}
-
-func findInputDeclsHelper(typ gotype.Type, decls DeclarerSet) {
-	switch typ := gotype.UnwrapNestedType(typ).(type) {
-	case *gotype.CompositeType:
-		decls.AddAll(
-			NewCompositeTypeDeclarer(typ),
-		)
-		for _, childType := range typ.FieldTypes {
-			findInputDeclsHelper(childType, decls)
-		}
-
-	case *gotype.ArrayType:
-		if gotype.IsPgxSupportedArray(typ) {
-			return
-		}
-		findInputDeclsHelper(typ.Elem, decls)
-
-	case *gotype.EnumType:
-		decls.AddAll(
-			NewEnumTypeDeclarer(typ),
-		)
-
-	default:
-		return
-	}
-}
-
-// FindOutputDeclarers finds all necessary Declarers for types that appear in
-// the output rows. Returns nil if no declarers are needed.
-func FindOutputDeclarers(typ gotype.Type) DeclarerSet {
-	decls := NewDeclarerSet()
-	findOutputDeclsHelper(typ, decls)
-	return decls
-}
-
-func findOutputDeclsHelper(typ gotype.Type, decls DeclarerSet) {
-	switch typ := gotype.UnwrapNestedType(typ).(type) {
-	case *gotype.EnumType:
-		decls.AddAll(
-			NewEnumTypeDeclarer(typ),
-		)
-
-	case *gotype.CompositeType:
-		decls.AddAll(
-			NewCompositeTypeDeclarer(typ),
-		)
-		for _, childType := range typ.FieldTypes {
-			findOutputDeclsHelper(childType, decls)
-		}
-
-	case *gotype.ArrayType:
-		if gotype.IsPgxSupportedArray(typ) {
-			return
-		}
-		findOutputDeclsHelper(typ.Elem, decls)
-
-	default:
-		return
-	}
 }
 
 // ConstantDeclarer declares a new string literal.

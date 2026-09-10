@@ -10,8 +10,7 @@ import (
 )
 
 func TestNewQuerier_ArrayNested2(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)
@@ -42,8 +41,7 @@ func TestNewQuerier_ArrayNested2(t *testing.T) {
 }
 
 func TestNewQuerier_Nested3(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 	require.NoError(t, RegisterTypes(context.Background(), conn))
 
 	q := NewQuerier(conn)

@@ -12,8 +12,7 @@ import (
 )
 
 func TestNewQuerier_FindOrdersByCustomer(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"../01_schema.sql", "../02_schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"../01_schema.sql", "../02_schema.sql"})
 	ctx := context.Background()
 
 	q := NewQuerier(conn)

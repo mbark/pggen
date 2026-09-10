@@ -231,7 +231,7 @@ func TestType_QualifyRel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.typ.Import()+"."+tt.typ.BaseName(), func(t *testing.T) {
-			got := gotype.QualifyType(tt.typ, tt.otherPkgPath)
+			got := gotype.QualifyType(tt.typ, tt.otherPkgPath, nil)
 			assert.Equal(t, tt.want, got)
 		})
 	}

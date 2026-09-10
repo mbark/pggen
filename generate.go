@@ -248,58 +248,80 @@ func loadClickHouseSchemas(ctx context.Context, conn driver.Conn, schemaFiles []
 
 // connectPostgres connects to postgres using connString if given or by
 // running a Docker postgres container and connecting to that.
+//
+// The returned cleanup closes the connection and stops the container, so every
+// failure below has to run it rather than leave either behind.
 func connectPostgres(ctx context.Context, opts GenerateOptions) (*pgx.Conn, func(error) error, func() error, error) {
-	// Create connection by starting dockerized Postgres.
-	if opts.ConnString == "" {
+	connString := opts.ConnString
+	stop := func() error { return nil }
+	errEnricher := func(e error) error { return e }
+
+	if connString == "" {
 		client, err := pgdocker.Start(ctx, opts.SchemaFiles)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("start dockerized postgres: %w", err)
 		}
-		stopDocker := func() error { return client.Stop(ctx) }
-		connStr, err := client.ConnString()
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("get dockerized postgres conn string: %w", err)
-		}
-		pgConn, err := pgx.Connect(ctx, connStr)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("connect to pggen dockerized postgres database: %w", err)
-		}
-		errEnricher := func(e error) error {
+		stop = func() error { return client.Stop(ctx) }
+		errEnricher = func(e error) error {
 			if e == nil {
-				return e
+				return nil
 			}
-			logs, err := client.GetContainerLogs()
-			if err != nil {
-				return errors.Join(e, err)
+			logs, logErr := client.GetContainerLogs()
+			if logErr != nil {
+				return errors.Join(e, logErr)
 			}
 			return fmt.Errorf("container logs for Postgres container:\n\n%s\n\n%w", logs, e)
 		}
-		return pgConn, errEnricher, stopDocker, nil
-	}
-	// Use existing Postgres.
-	nopCleanup := func() error { return nil }
-	nopErrEnricher := func(e error) error { return e }
-	pgConn, err := pgx.Connect(ctx, opts.ConnString)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("connect to pggen postgres database: %w", err)
-	}
-	// Run SQL init scripts. pgdocker runs these in the other case by copying
-	// the files into the entrypoint folder. Emulate the behavior for a subset of
-	// supported files.
-	for _, script := range opts.SchemaFiles {
-		if filepath.Ext(script) != ".sql" {
-			return nil, nopErrEnricher, nopCleanup, fmt.Errorf("cannot run non-sql schema file on Postgres "+
-				"(*.sh and *.sql.gz files only supported without --postgres-connection): %s", script)
-		}
-		bs, err := os.ReadFile(script)
+		connString, err = client.ConnString()
 		if err != nil {
-			return nil, nil, nopCleanup, fmt.Errorf("read schema file: %w", err)
-		}
-		if _, err := pgConn.Exec(ctx, string(bs)); err != nil {
-			return nil, nopErrEnricher, nopCleanup, fmt.Errorf("load schema file into Postgres: %w", err)
+			_ = stop()
+			return nil, nil, nil, errEnricher(fmt.Errorf("get dockerized postgres conn string: %w", err))
 		}
 	}
-	return pgConn, nopErrEnricher, nopCleanup, nil
+
+	pgConn, err := pgx.Connect(ctx, connString)
+	if err != nil {
+		_ = stop()
+		return nil, nil, nil, errEnricher(fmt.Errorf("connect to pggen postgres database: %w", err))
+	}
+	cleanup := func() error {
+		closeErr := pgConn.Close(ctx)
+		if stopErr := stop(); stopErr != nil {
+			return stopErr
+		}
+		return closeErr
+	}
+
+	// With an external connection, load the schema files ourselves; the Docker
+	// path has already run them as init scripts.
+	if opts.ConnString != "" {
+		if err := loadPostgresSchemas(ctx, pgConn, opts.SchemaFiles); err != nil {
+			_ = cleanup()
+			return nil, nil, nil, err
+		}
+	}
+
+	return pgConn, errEnricher, cleanup, nil
+}
+
+// loadPostgresSchemas runs each schema file against conn. pgdocker runs these
+// by copying the files into the container's entrypoint folder, which supports
+// more file types than a plain connection can.
+func loadPostgresSchemas(ctx context.Context, conn *pgx.Conn, schemaFiles []string) error {
+	for _, file := range schemaFiles {
+		if filepath.Ext(file) != ".sql" {
+			return fmt.Errorf("cannot run non-sql schema file on Postgres "+
+				"(*.sh and *.sql.gz files only supported without --postgres-connection): %s", file)
+		}
+		bs, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read schema file %s: %w", file, err)
+		}
+		if _, err := conn.Exec(ctx, string(bs)); err != nil {
+			return fmt.Errorf("load schema file %s into Postgres: %w", file, err)
+		}
+	}
+	return nil
 }
 
 func parseQueryFiles(queryFiles []string, inferrer Inferrer, dialect Dialect) ([]codegen.QueryFile, error) {

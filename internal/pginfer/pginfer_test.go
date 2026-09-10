@@ -17,7 +17,7 @@ import (
 )
 
 func TestInferrer_InferTypes(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
+	conn := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
 		CREATE TABLE author (
 			author_id  serial PRIMARY KEY,
 			first_name text NOT NULL,
@@ -32,7 +32,6 @@ func TestInferrer_InferTypes(t *testing.T) {
 
 		CREATE DOMAIN us_postal_code AS text;
 	`))
-	defer cleanupFunc()
 	q := pg.NewQuerier(conn)
 	deviceTypeOID, err := q.FindOIDByName(context.Background(), "device_type")
 	require.NoError(t, err)
@@ -333,10 +332,9 @@ func TestInferrer_InferTypes(t *testing.T) {
 }
 
 func TestInferrer_InferTypes_Error(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchema(t, []string{
+	conn := pgtest.NewPostgresSchema(t, []string{
 		"../../example/author/schema.sql",
 	})
-	defer cleanupFunc()
 
 	tests := []struct {
 		query *ast.SourceQuery

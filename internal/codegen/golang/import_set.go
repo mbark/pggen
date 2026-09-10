@@ -26,22 +26,12 @@ func (s *ImportSet) AddPackage(p string) {
 // Only a leaf carries a package, so the whole tree has to be walked: a type
 // like []map[string]time.Time names "time" three wrappers down.
 func (s *ImportSet) AddType(typ gotype.Type) {
-	switch t := typ.(type) {
-	case *gotype.ImportType:
-		s.AddPackage(t.PkgPath)
-		s.AddType(t.Type)
-	case *gotype.CompositeType:
-		for _, childType := range t.FieldTypes {
-			s.AddType(childType)
+	gotype.Walk(typ, func(t gotype.Type) bool {
+		if imp, ok := t.(*gotype.ImportType); ok {
+			s.AddPackage(imp.PkgPath)
 		}
-	case *gotype.MapType:
-		s.AddType(t.Key)
-		s.AddType(t.Val)
-	case *gotype.ArrayType:
-		s.AddType(t.Elem)
-	case *gotype.PointerType:
-		s.AddType(t.Elem)
-	}
+		return true
+	})
 }
 
 // ImportPkg is a single import entry, optionally with an alias.

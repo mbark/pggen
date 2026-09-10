@@ -22,7 +22,7 @@ func resolveCh(t *testing.T, s string, overrides map[string]string) string {
 
 	got, err := NewChTypeResolver(caser, overrides).Resolve(typ, false, "example.com/gen")
 	require.NoError(t, err, "resolve %q", s)
-	return gotype.QualifyType(got, "example.com/gen")
+	return gotype.QualifyType(got, "example.com/gen", nil)
 }
 
 // TestChTypeResolver_knownTypes pins the leaf type table. Every row is here

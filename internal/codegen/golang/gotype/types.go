@@ -108,20 +108,20 @@ func (e *VoidType) Import() string   { return "" }
 func (e *VoidType) BaseName() string { return "" }
 
 // QualifyType returns the Go qualified type string for typ, relative to
-// otherPkgPath. If aliases is non-nil, it maps full package paths to import
-// aliases for resolving name collisions.
-func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) string {
+// otherPkgPath. aliases maps a full package path to the import alias to
+// qualify it with, for the packages whose short names collide; it may be nil.
+func QualifyType(typ Type, otherPkgPath string, aliases map[string]string) string {
 	// A composite type qualifies each of its parts on its own, recursively:
 	// the parts can come from different packages, and a map or an array can
 	// appear at any depth. Only a leaf carries an import.
 	switch t := typ.(type) {
 	case *MapType:
-		return "map[" + QualifyType(t.Key, otherPkgPath, aliases...) + "]" +
-			QualifyType(t.Val, otherPkgPath, aliases...)
+		return "map[" + QualifyType(t.Key, otherPkgPath, aliases) + "]" +
+			QualifyType(t.Val, otherPkgPath, aliases)
 	case *ArrayType:
-		return "[]" + QualifyType(t.Elem, otherPkgPath, aliases...)
+		return "[]" + QualifyType(t.Elem, otherPkgPath, aliases)
 	case *PointerType:
-		return "*" + QualifyType(t.Elem, otherPkgPath, aliases...)
+		return "*" + QualifyType(t.Elem, otherPkgPath, aliases)
 	}
 
 	name := typ.BaseName()
@@ -129,11 +129,7 @@ func QualifyType(typ Type, otherPkgPath string, aliases ...map[string]string) st
 	if pkg == "" || pkg == otherPkgPath {
 		return name
 	}
-	// Check for an import alias first.
-	shortPkg := ""
-	if len(aliases) > 0 && aliases[0] != nil {
-		shortPkg = aliases[0][pkg]
-	}
+	shortPkg := aliases[pkg]
 	if shortPkg == "" {
 		shortPkg = ExtractShortPackage([]byte(pkg))
 	}
@@ -228,10 +224,9 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 
 	if isArr {
 		arr, ok := sqlType.(sqltype.ArrayType)
-		// Ensure that if we have a Go slice type that the database type is also
-		// an array. []byte is special since it maps to scalar types like the
-		// Postgres bytea type.
-		if !ok && sqlType != nil && qualType != "[]byte" {
+		// A Go slice type must be backed by a database array, except for the
+		// one slice that isn't.
+		if !ok && sqlType != nil && !IsByteSlice(qualType) {
 			return nil, fmt.Errorf("opaque database type %T{%+v} for go type %q is not an array type", sqlType, sqlType, qualType)
 		}
 		sqlName := ""
@@ -243,6 +238,12 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 
 	return typ, nil
 }
+
+// IsByteSlice reports whether the Go type spelled name is []byte, the one Go
+// slice that does not stand for a database array: the Postgres bytea, json and
+// jsonb types all map to it. Both the known-type table and a --go-type
+// override have to make that exception.
+func IsByteSlice(name string) bool { return name == "[]byte" }
 
 // MustParseKnownType creates a gotype.Type by parsing a fully qualified Go type
 // that pgx supports natively like "github.com/jackc/pgtype.Int4Array", or most
@@ -319,6 +320,36 @@ func ChooseFallbackName(pgName string, prefix string) string {
 		}
 	}
 	return sb.String()
+}
+
+// Walk calls fn for typ and then for every type nested inside it, depth
+// first. If fn returns false, the types under that one are not visited.
+//
+// A Go type is a tree — []*ImportType, a CompositeType whose fields are
+// themselves composites, a ClickHouse Array(Map(String, T)) — and nearly
+// every question the code generator asks about one is a question about the
+// whole tree: which packages it imports, which declarations it needs, which
+// database types have to be registered. Walking it in one place keeps those
+// answers from disagreeing about which wrappers exist.
+func Walk(typ Type, fn func(Type) bool) {
+	if !fn(typ) {
+		return
+	}
+	switch t := typ.(type) {
+	case *ImportType:
+		Walk(t.Type, fn)
+	case *CompositeType:
+		for _, field := range t.FieldTypes {
+			Walk(field, fn)
+		}
+	case *MapType:
+		Walk(t.Key, fn)
+		Walk(t.Val, fn)
+	case *ArrayType:
+		Walk(t.Elem, fn)
+	case *PointerType:
+		Walk(t.Elem, fn)
+	}
 }
 
 // UnwrapNestedType returns the first type under gotype.ImportType or

@@ -49,24 +49,21 @@ func (t TypeRegistrationDeclarer) Declare(string) (string, error) {
 }
 
 // collectPgTypeNames walks a gotype.Type tree and collects Postgres type names
-// for composite and enum types that need registration.
+// for composite, enum and array types that need registration.
 func collectPgTypeNames(typ gotype.Type, names map[string]struct{}) {
-	switch typ := gotype.UnwrapNestedType(typ).(type) {
-	case *gotype.CompositeType:
-		if typ.SQLName != "" {
-			names[typ.SQLName] = struct{}{}
+	gotype.Walk(typ, func(typ gotype.Type) bool {
+		name := ""
+		switch typ := typ.(type) {
+		case *gotype.CompositeType:
+			name = typ.SQLName
+		case *gotype.EnumType:
+			name = typ.SQLName
+		case *gotype.ArrayType:
+			name = typ.SQLName
 		}
-		for _, fieldType := range typ.FieldTypes {
-			collectPgTypeNames(fieldType, names)
+		if name != "" {
+			names[name] = struct{}{}
 		}
-	case *gotype.EnumType:
-		if typ.SQLName != "" {
-			names[typ.SQLName] = struct{}{}
-		}
-	case *gotype.ArrayType:
-		if typ.SQLName != "" {
-			names[typ.SQLName] = struct{}{}
-		}
-		collectPgTypeNames(typ.Elem, names)
-	}
+		return true
+	})
 }

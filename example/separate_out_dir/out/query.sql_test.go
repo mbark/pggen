@@ -10,8 +10,7 @@ import (
 )
 
 func TestNewQuerier_FindAuthorByID(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
 
 	q := NewQuerier(conn)
 

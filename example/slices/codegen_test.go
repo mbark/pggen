@@ -11,8 +11,7 @@ import (
 )
 
 func TestGenerate_Go_Example_Slices(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanupFunc()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	tmpDir := t.TempDir()
 	err := pggen.Generate(

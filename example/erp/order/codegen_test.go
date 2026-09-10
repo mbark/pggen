@@ -10,11 +10,10 @@ import (
 )
 
 func TestGenerate_Go_Example_ERP_Order(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchema(t, []string{
+	conn := pgtest.NewPostgresSchema(t, []string{
 		"../01_schema.sql",
 		"../02_schema.sql",
 	})
-	defer cleanupFunc()
 
 	tmpDir := t.TempDir()
 	err := pggen.Generate(

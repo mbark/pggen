@@ -205,7 +205,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
 			inputTypes[i] = goType
-			declarers.AddAll(FindInputDeclarers(goType).ListAll()...)
+			declarers.AddAll(FindDeclarers(goType).ListAll()...)
 		}
 
 		outputTypes := make([]gotype.Type, len(query.Outputs))
@@ -218,7 +218,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			imports.AddType(goType)
 			collectPgTypeNames(goType, pgTypeNames)
 			outputTypes[i] = goType
-			declarers.AddAll(FindOutputDeclarers(goType).ListAll()...)
+			declarers.AddAll(FindDeclarers(goType).ListAll()...)
 		}
 
 		queryDatas = append(queryDatas, queryData{

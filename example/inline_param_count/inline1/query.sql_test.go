@@ -13,8 +13,7 @@ import (
 )
 
 func TestNewQuerier_FindAuthorByID(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
 
 	q := NewQuerier(conn)
 	adamsID := insertAuthor(t, q, "john", "adams")
@@ -63,8 +62,7 @@ func TestNewQuerier_FindAuthorByID(t *testing.T) {
 }
 
 func TestNewQuerier_DeleteAuthorsByFullName(t *testing.T) {
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"../schema.sql"})
 	q := NewQuerier(conn)
 	insertAuthor(t, q, "george", "washington")
 

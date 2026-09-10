@@ -13,8 +13,7 @@ import (
 
 func TestNewQuerier_GetBools(t *testing.T) {
 	ctx := context.Background()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	q := NewQuerier(conn)
 
@@ -39,8 +38,7 @@ func TestNewQuerier_GetBools(t *testing.T) {
 
 func TestNewQuerier_GetOneTimestamp(t *testing.T) {
 	ctx := context.Background()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	q := NewQuerier(conn)
 	ts := time.Date(2020, 1, 1, 11, 11, 11, 0, time.UTC)
@@ -64,8 +62,7 @@ func TestNewQuerier_GetOneTimestamp(t *testing.T) {
 
 func TestNewQuerier_GetManyTimestamptzs(t *testing.T) {
 	ctx := context.Background()
-	conn, cleanup := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
-	defer cleanup()
+	conn := pgtest.NewPostgresSchema(t, []string{"schema.sql"})
 
 	q := NewQuerier(conn)
 	ts1 := time.Date(2020, 1, 1, 11, 11, 11, 0, time.UTC)

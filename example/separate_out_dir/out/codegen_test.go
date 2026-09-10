@@ -10,10 +10,9 @@ import (
 )
 
 func TestGenerate_Go_Example_SeparateOutDir(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchema(t, []string{
+	conn := pgtest.NewPostgresSchema(t, []string{
 		"../schema.sql",
 	})
-	defer cleanupFunc()
 
 	tmpDir := t.TempDir()
 	err := pggen.Generate(

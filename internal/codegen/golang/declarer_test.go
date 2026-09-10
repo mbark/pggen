@@ -113,7 +113,7 @@ func TestDeclarers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name+"_input", func(t *testing.T) {
 			golden := "testdata/declarer_" + tt.name + ".input.golden"
-			decls := FindInputDeclarers(tt.typ).ListAll()
+			decls := FindDeclarers(tt.typ).ListAll()
 			sb := &strings.Builder{}
 			for i, decl := range decls {
 				s, err := decl.Declare(tt.pkgPath)
@@ -140,7 +140,7 @@ func TestDeclarers(t *testing.T) {
 
 		t.Run(tt.name+"_output", func(t *testing.T) {
 			golden := "testdata/declarer_" + tt.name + ".output.golden"
-			decls := FindOutputDeclarers(tt.typ).ListAll()
+			decls := FindDeclarers(tt.typ).ListAll()
 			sb := &strings.Builder{}
 			for i, decl := range decls {
 				s, err := decl.Declare(tt.pkgPath)

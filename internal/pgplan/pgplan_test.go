@@ -51,12 +51,11 @@ func TestParseNode(t *testing.T) {
 }
 
 func TestParseNode_DB(t *testing.T) {
-	conn, cleanupFunc := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
+	conn := pgtest.NewPostgresSchemaString(t, texts.Dedent(`
 		CREATE TABLE author (
 			author_id int PRIMARY KEY
 		);
 	`))
-	defer cleanupFunc()
 	tests := []struct {
 		sql  string
 		want Node
