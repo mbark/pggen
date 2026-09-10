@@ -18,6 +18,22 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3
+        env:
+          CLICKHOUSE_DB: pggen
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: hunter2
+        # 9010/8124 rather than the usual 9000/8123, matching
+        # docker-compose.yml and internal/chtest.Addr.
+        ports:
+          - 9010:9000
+          - 8124:8123
+        options: >-
+          --health-cmd "clickhouse-client --user default --password hunter2 --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
