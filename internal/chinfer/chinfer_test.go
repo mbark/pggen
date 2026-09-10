@@ -377,6 +377,66 @@ func TestInferrer_execIsChecked(t *testing.T) {
 			t.Errorf("error %q should say clickhouse rejected the query", err)
 		}
 	})
+
+	// EXPLAIN AST parses without resolving a single name, so none of the
+	// three below are caught by it. They are caught by resolving the target.
+	t.Run("an insert naming a column the table lacks is rejected", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name:        "WrongColumn",
+			PreparedSQL: "INSERT INTO cdr (a_num, no_such_column) SELECT 'x', 1",
+			ResultKind:  ast.ResultKindExec,
+		}
+		_, err := inf.InferTypes(query)
+		if err == nil {
+			t.Fatal("InferTypes accepted an insert into a column that does not exist")
+		}
+		if !strings.Contains(err.Error(), `has no column "no_such_column"`) {
+			t.Errorf("error %q should name the column that does not exist", err)
+		}
+		if !strings.Contains(err.Error(), "a_num") {
+			t.Errorf("error %q should list the columns the table does have", err)
+		}
+	})
+
+	t.Run("an insert into a table that does not exist is rejected", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name:        "WrongTable",
+			PreparedSQL: "INSERT INTO no_such_table (a_num) SELECT 'x'",
+			ResultKind:  ast.ResultKindExec,
+		}
+		_, err := inf.InferTypes(query)
+		if err == nil {
+			t.Fatal("InferTypes accepted an insert into a table that does not exist")
+		}
+	})
+
+	// A table function has no schema to resolve, so there is nothing to check
+	// and the query passes on the parse alone.
+	t.Run("an insert through a table function passes", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name:        "InsertThroughFunction",
+			PreparedSQL: "INSERT INTO FUNCTION s3({s3_url:String}, 'CSV') SELECT a_num FROM cdr",
+			ResultKind:  ast.ResultKindExec,
+		}
+		if _, err := inf.InferTypes(query); err != nil {
+			t.Fatalf("InferTypes returned error: %v", err)
+		}
+	})
+
+	// The check resolves the target and stops. Reaching the bucket to resolve
+	// the SELECT half is what generating without S3 credentials rules out.
+	t.Run("an s3 import still needs no credentials", func(t *testing.T) {
+		query := &ast.SourceQuery{
+			Name: "ImportFromS3",
+			PreparedSQL: texts.Dedent(`
+				INSERT INTO cdr (a_num, units)
+				SELECT c1, c2 FROM s3({s3_url:String}, 'CSV', 'c1 String, c2 Int64')`),
+			ResultKind: ast.ResultKindExec,
+		}
+		if _, err := inf.InferTypes(query); err != nil {
+			t.Fatalf("InferTypes returned error: %v", err)
+		}
+	})
 }
 
 func TestInferrer_InferTypes_errors(t *testing.T) {

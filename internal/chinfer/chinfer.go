@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -77,13 +79,7 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 
 	var outputs []codegen.OutputColumn
 	if query.ResultKind == ast.ResultKindExec {
-		// An :exec query has no result columns to infer, but it still gets
-		// checked. EXPLAIN AST parses the query without running it, which is
-		// as far as the server will go: EXPLAIN proper is SELECT-only, so
-		// there is no way to have an INSERT semantically analysed short of
-		// executing it. That is the price of not needing S3 credentials at
-		// generation time for the INSERT ... SELECT FROM s3(...) imports.
-		if err := inf.checkSyntax(ctx, query.PreparedSQL, params); err != nil {
+		if err := inf.checkExec(ctx, query.PreparedSQL, params); err != nil {
 			return codegen.TypedQuery{}, fmt.Errorf("check query %s: %w", query.Name, err)
 		}
 	} else {
@@ -156,6 +152,95 @@ func (inf *Inferrer) queryCtx(ctx context.Context) context.Context {
 		return ctx
 	}
 	return clickhouse.Context(ctx, clickhouse.WithSettings(inf.settings))
+}
+
+// checkExec checks an :exec query as far as ClickHouse will go without running
+// it.
+//
+// An :exec query has no result columns, so there is nothing to infer — but
+// there is still something to get wrong. It gets two checks, and neither is
+// the semantic analysis a :one or :many gets for free from DESCRIBE, because
+// an INSERT is the one statement ClickHouse will not analyse without executing
+// it: DESCRIBE and EXPLAIN QUERY TREE are both SELECT-shaped and reject it
+// outright, and EXPLAIN SYNTAX hands the statement straight back.
+//
+// What is left is a parse, and the insert target. Between them they catch a
+// malformed query and a target that has moved out from under it, which is
+// where a schema change lands. What nothing here catches is the SELECT half:
+// for the INSERT ... SELECT FROM s3(...) imports that would mean reaching the
+// bucket, and needing S3 credentials at generation time is the cost this whole
+// arrangement exists to avoid.
+func (inf *Inferrer) checkExec(ctx context.Context, sql string, params []ch.Param) error {
+	if err := inf.checkSyntax(ctx, sql, params); err != nil {
+		return err
+	}
+	return inf.checkInsertTarget(ctx, sql)
+}
+
+// checkInsertTarget resolves the table an INSERT writes to and the columns it
+// names, for a query where ScanInsertTarget finds them. A query it cannot read
+// a plain table out of passes: there is nothing to check, which is not the
+// same as nothing being wrong.
+func (inf *Inferrer) checkInsertTarget(ctx context.Context, sql string) error {
+	stmt, err := ch.SingleStatement(sql)
+	if err != nil {
+		return err
+	}
+	target, ok := ch.ScanInsertTarget(stmt)
+	if !ok {
+		return nil
+	}
+
+	existing, err := inf.describeTable(ctx, target.Table)
+	if err != nil {
+		return err
+	}
+	for _, column := range target.Columns {
+		if _, ok := existing[column]; ok {
+			continue
+		}
+		return fmt.Errorf("insert target %s has no column %q; it has %s",
+			target.Table, column, strings.Join(sortedNames(existing), ", "))
+	}
+	return nil
+}
+
+// describeTable returns the names of a table's columns. DESCRIBE TABLE
+// resolves the table without reading any of its data, so this costs a round
+// trip and nothing else.
+func (inf *Inferrer) describeTable(ctx context.Context, table string) (map[string]struct{}, error) {
+	rows, err := inf.conn.Query(inf.queryCtx(ctx), "DESCRIBE TABLE "+table)
+	if err != nil {
+		return nil, describeError(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	names := map[string]struct{}{}
+	cols := rows.Columns()
+	for rows.Next() {
+		cells := make([]string, len(cols))
+		dest := make([]any, len(cols))
+		for i := range cells {
+			dest[i] = &cells[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, fmt.Errorf("scan DESCRIBE TABLE %s row: %w", table, err)
+		}
+		names[cells[0]] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, describeError(err)
+	}
+	return names, nil
+}
+
+func sortedNames(names map[string]struct{}) []string {
+	out := make([]string, 0, len(names))
+	for name := range names {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // checkSyntax asks the server to parse the query without running it.

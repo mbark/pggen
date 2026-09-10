@@ -152,9 +152,17 @@ Two things differ from the Postgres output, both because ClickHouse does:
 supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.
 
 An `:exec` query is checked less thoroughly than the rest. ClickHouse will only
-analyse a query it can run as a `SELECT`, so an `INSERT` is parsed rather than
-resolved: a malformed one fails at generation, but one naming a column that
-does not exist fails when your application runs it.
+analyse a query it can run as a `SELECT` — `DESCRIBE` and `EXPLAIN QUERY TREE`
+both reject an `INSERT` outright — so an `INSERT` gets a parse, plus its target:
+`chgen` resolves the table it writes to and the columns it names, which costs a
+`DESCRIBE TABLE` and reads no data. A malformed query, a table that has moved,
+and a renamed column all fail at generation.
+
+What that leaves unchecked is the `SELECT` half. Resolving it means reading the
+source, and for the `INSERT ... SELECT FROM s3(...)` imports that means reaching
+the bucket — needing S3 credentials at generation time is the cost this
+arrangement exists to avoid. So a column renamed on the *source* side of an
+import still fails when your application runs it.
 
 ## Pitch
 
