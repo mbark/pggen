@@ -98,6 +98,16 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 	// Add declarers to leader file.
 	goQueryFiles[firstIndex].Declarers = allDeclarers.ListAll()
 
+	// substituteIdentifiers is declared on the leader whichever file's query
+	// needs it, so its strings import belongs there and only there.
+	if hasChIdentifiers(goQueryFiles) {
+		for i, file := range goQueryFiles {
+			if file.IsLeader {
+				goQueryFiles[i].Imports = addImport(file.Imports, "strings")
+			}
+		}
+	}
+
 	// Drop imports a file turned out not to need. genericConn covers the whole
 	// package, so its method set is read from every file, not just this one —
 	// and Pkg is not linked up until after templating.
@@ -282,6 +292,12 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			// Name the SQL const after the unexported helper so the generated
 			// code reads cleanly and stays unique per variant.
 			tq.SQLVarName = tq.VariantMethodName() + "SQL"
+		}
+		// An {…:Identifier} parameter is substituted into the query text by a
+		// helper the package declares once. It lands on the leader file, which
+		// is where its strings import goes too — see below.
+		if tq.EmitChHasIdentifiers() {
+			declarers.AddAll(NewChIdentifierDeclarer())
 		}
 		// sql=<Name> exports the constant under the name the query chose, for a
 		// caller that needs the query as text and not only as a method.
@@ -537,6 +553,24 @@ func unwrapPointer(t gotype.Type) gotype.Type {
 }
 
 // removeImport returns imports without pkgPath, preserving order.
+// addImport inserts pkgPath in path order, or leaves imports alone if it is
+// already there.
+func addImport(imports []ImportPkg, pkgPath string) []ImportPkg {
+	at := len(imports)
+	for i, imp := range imports {
+		if imp.PkgPath == pkgPath {
+			return imports
+		}
+		if imp.PkgPath > pkgPath && at == len(imports) {
+			at = i
+		}
+	}
+	imports = append(imports, ImportPkg{})
+	copy(imports[at+1:], imports[at:])
+	imports[at] = ImportPkg{PkgPath: pkgPath}
+	return imports
+}
+
 func removeImport(imports []ImportPkg, pkgPath string) []ImportPkg {
 	for i, imp := range imports {
 		if imp.PkgPath == pkgPath {
@@ -571,4 +605,17 @@ func validateSQLConstNames(files []TemplatedFile) error {
 		}
 	}
 	return nil
+}
+
+// hasChIdentifiers reports whether any query in the package takes an
+// {…:Identifier} parameter.
+func hasChIdentifiers(files []TemplatedFile) bool {
+	for _, f := range files {
+		for _, q := range append(append([]TemplatedQuery{}, f.Queries...), f.Variants...) {
+			if q.EmitChHasIdentifiers() {
+				return true
+			}
+		}
+	}
+	return false
 }

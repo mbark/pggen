@@ -9,6 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,17 @@ type Querier interface {
 	// settings, so it has to rename them to describe the query; see
 	// ch.RenameParams.
 	ListCDRsPaged(ctx context.Context, params ListCDRsPagedParams) ([]ListCDRsPagedRow, error)
+
+	// Reads a table chosen at run time. {cdr_source:Identifier} names a table
+	// rather than carrying a value, so it cannot be bound like one: the generated
+	// method substitutes it into the query text, having checked it is a plain
+	// identifier. The from parameter beside it is bound the ordinary way, which is
+	// the reason pggen substitutes rather than letting ClickHouse bind the
+	// identifier itself — see ch.SubstituteIdentifiers.
+	//
+	// chgen describes this against a table named after the parameter, cdr_source,
+	// which schema.sql declares.
+	SumUnitsFrom(ctx context.Context, cdrSource string, from time.Time) ([]SumUnitsFromRow, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -69,6 +81,48 @@ type genericConn interface {
 // a clickhouse.Conn.
 func NewQuerier(conn genericConn) *DBQuerier {
 	return &DBQuerier{conn: conn}
+}
+
+// substituteIdentifiers fills each {name:Identifier} in sql with the value
+// given for name.
+//
+// A ClickHouse Identifier parameter names a table or column, so it cannot be
+// bound like a value: it has to be in the query text before the driver sees
+// it. Each value must therefore be a plain identifier — a letter or underscore
+// followed by letters, digits or underscores, optionally qualified by a
+// database — and anything else is refused rather than quoted, so no value can
+// carry SQL of its own into the query.
+func substituteIdentifiers(sql string, values map[string]string) (string, error) {
+	for name, value := range values {
+		if err := checkIdentifier(name, value); err != nil {
+			return "", err
+		}
+		sql = strings.ReplaceAll(sql, "{"+name+":Identifier}", value)
+	}
+	return sql, nil
+}
+
+// checkIdentifier reports whether value is a plain, optionally qualified
+// ClickHouse identifier. param names the query parameter, for the error.
+func checkIdentifier(param, value string) error {
+	if value == "" {
+		return fmt.Errorf("identifier parameter %s is empty", param)
+	}
+	for _, part := range strings.Split(value, ".") {
+		if part == "" {
+			return fmt.Errorf("identifier parameter %s has an empty part in %q", param, value)
+		}
+		for i, r := range part {
+			isLetter := r == '_' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z')
+			if isLetter || (i > 0 && '0' <= r && r <= '9') {
+				continue
+			}
+			return fmt.Errorf("identifier parameter %s is %q, which is not a plain identifier: "+
+				"a table or column name here must be letters, digits and underscores, "+
+				"optionally qualified by a database", param, value)
+		}
+	}
+	return nil
 }
 
 type ChargeRow struct {
@@ -316,6 +370,35 @@ func (q *DBQuerier) ListCDRsPaged(ctx context.Context, params ListCDRsPagedParam
 		clickhouse.Named("offset", params.Offset),
 	); err != nil {
 		return nil, fmt.Errorf("query ListCDRsPaged: %w", err)
+	}
+	return items, nil
+}
+
+const sumUnitsFromSQL = `SELECT
+    provider,
+    sum(units) AS units
+FROM {cdr_source:Identifier}
+WHERE start_date >= cast(@from AS DateTime)
+GROUP BY provider
+ORDER BY provider;`
+
+type SumUnitsFromRow struct {
+	Provider string `ch:"provider" json:"provider"`
+	Units    int64  `ch:"units"    json:"units"`
+}
+
+// SumUnitsFrom implements Querier.SumUnitsFrom.
+func (q *DBQuerier) SumUnitsFrom(ctx context.Context, cdrSource string, from time.Time) ([]SumUnitsFromRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "SumUnitsFrom")
+	var items []SumUnitsFromRow
+	sql, err := substituteIdentifiers(sumUnitsFromSQL, map[string]string{"cdr_source": cdrSource})
+	if err != nil {
+		return nil, fmt.Errorf("query SumUnitsFrom: %w", err)
+	}
+	if err := q.conn.Select(ctx, &items, sql,
+		clickhouse.Named("from", from),
+	); err != nil {
+		return nil, fmt.Errorf("query SumUnitsFrom: %w", err)
 	}
 	return items, nil
 }

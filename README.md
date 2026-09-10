@@ -121,7 +121,7 @@ func (q *DBQuerier) FindDataUsage(
 }
 ```
 
-Two things differ from the Postgres output, both because ClickHouse does:
+Three things differ from the Postgres output, all because ClickHouse does:
 
 - **Nullability is exact, not guessed.** ClickHouse puts it in the type —
   `Nullable(String)` — so `chgen` reads it off `DESCRIBE` rather than inferring
@@ -147,6 +147,36 @@ Two things differ from the Postgres output, both because ClickHouse does:
   Enum8 to *cdr.RecordType is unsupported`, so an override that is only a
   rename does not work here. `example/clickhouse_multi` shows the form that
   does.
+- **A table name can be a parameter.** ClickHouse spells one
+  `{name:Identifier}`, and `chgen` generates a `string` parameter for it:
+
+  ```sql
+  -- name: SumUnitsFrom :many
+  SELECT provider, sum(units) AS units
+  FROM {cdr_source:Identifier}
+  WHERE start_date >= {from:DateTime}
+  GROUP BY provider;
+  ```
+
+  ```go
+  func (q *DBQuerier) SumUnitsFrom(ctx context.Context, cdrSource string, from time.Time) ([]SumUnitsFromRow, error)
+  ```
+
+  To `DESCRIBE` such a query the server needs a real name, so **`chgen`
+  substitutes the parameter's own name**: the query above is described against
+  a table called `cdr_source`, which you create in the database you generate
+  against, shaped like the tables the query will really read. There is nothing
+  else to configure, and nothing to keep in step with the query.
+
+  Unlike every other parameter, the identifier is put into the query *text*
+  rather than bound, so the generated code refuses a value that is not a plain
+  identifier — letters, digits and underscores, optionally qualified by a
+  database — rather than trying to quote it. ClickHouse would bind an
+  identifier itself, and safely, but clickhouse-go switches a query to
+  server-side parameters as soon as its text holds any `{…:…}`, and those
+  travel as text it renders wrongly for `time.Time`, `uuid.UUID` and
+  `decimal.Decimal`. One identifier left for the server would quietly break
+  every other parameter beside it. `example/clickhouse_cdr` covers both halves.
 
 `chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
 supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.

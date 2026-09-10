@@ -84,3 +84,21 @@ FROM cdr
 WHERE provider = {provider:String}
 ORDER BY a_num, start_date
 LIMIT {limit:UInt32} OFFSET {offset:UInt32};
+
+-- Reads a table chosen at run time. {cdr_source:Identifier} names a table
+-- rather than carrying a value, so it cannot be bound like one: the generated
+-- method substitutes it into the query text, having checked it is a plain
+-- identifier. The from parameter beside it is bound the ordinary way, which is
+-- the reason pggen substitutes rather than letting ClickHouse bind the
+-- identifier itself — see ch.SubstituteIdentifiers.
+--
+-- chgen describes this against a table named after the parameter, cdr_source,
+-- which schema.sql declares.
+-- name: SumUnitsFrom :many
+SELECT
+    provider,
+    sum(units) AS units
+FROM {cdr_source:Identifier}
+WHERE start_date >= {from:DateTime}
+GROUP BY provider
+ORDER BY provider;

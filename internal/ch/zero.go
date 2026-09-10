@@ -14,8 +14,9 @@ import (
 // value, even though the values never affect the result columns. So inference
 // binds a throwaway literal for each parameter, and this produces it.
 //
-// Identifier parameters have no such literal — a made-up table name doesn't
-// resolve — so they return an error saying so.
+// An Identifier parameter never reaches here: it names a table or column rather
+// than carrying a value, and inference substitutes a stand-in name into the
+// query text instead of binding one. See ch.SubstituteIdentifiers.
 func ZeroLiteral(t Type) (string, error) {
 	switch t := t.(type) {
 	case Nullable:
@@ -81,10 +82,6 @@ func scalarZero(name string) (string, error) {
 		return "0.0.0.0", nil
 	case "IPv6":
 		return "::", nil
-	case "Identifier":
-		return "", fmt.Errorf("cannot infer a query with an {…:Identifier} parameter: " +
-			"pggen would have to substitute a real table or column name to run DESCRIBE. " +
-			"Interpolate the identifier in Go instead, and keep pggen parameters for values")
 	}
 	return "", fmt.Errorf("cannot infer a query with a %s parameter: "+
 		"pggen has no literal it can bind for that type", name)

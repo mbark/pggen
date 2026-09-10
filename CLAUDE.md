@@ -112,6 +112,17 @@ Things that are easy to miss:
     clickhouse-go decodes into nothing else. A plain named type compiles and fails at run
     time. `--go-type` splits on the *last* `=`, since the enum type carries its own.
     `example/clickhouse_multi` covers both.
+  - **`{name:Identifier}` names a table, and is substituted rather than bound.**
+    Inference describes the query against a table named after the parameter, so
+    the query file's parameter name is the stand-in table the caller must
+    create. Generated code fills the hole in the SQL text after checking the
+    value is a plain identifier — ClickHouse would bind it safely itself, but
+    clickhouse-go switches a query to server-side parameters as soon as its
+    text holds any `{…:…}`, which breaks the `cast(@name AS Type)` binding
+    every other parameter relies on. `ch.SubstituteIdentifiers` has the detail.
+  - **`sql=<Name>` also emits a query as an exported constant**, for a caller
+    that has to splice it into another statement. Such a constant carries no
+    statement terminator.
   - **`:exec` gets a weaker check than Postgres.** `DESCRIBE` is SELECT-shaped and so is
     `EXPLAIN`, so an `INSERT` can only be *parsed*, not analysed, without running it.
     `chinfer.checkSyntax` runs `EXPLAIN AST`, which catches a malformed query but not one

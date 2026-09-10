@@ -44,6 +44,11 @@ var chScalarTypes = map[string]gotype.Type{
 	"String": chString,
 	"Bool":   gotype.MustParseKnownType("bool"),
 
+	// Identifier is not a value type: it names a table or column, and the
+	// generated code substitutes it into the query text rather than binding it.
+	// A Go string is what the caller holds either way.
+	"Identifier": chString,
+
 	"Int8":  gotype.MustParseKnownType("int8"),
 	"Int16": gotype.MustParseKnownType("int16"),
 	"Int32": gotype.MustParseKnownType("int32"),

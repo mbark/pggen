@@ -73,6 +73,11 @@ func (tq TemplatedQuery) EmitChResultSignature() (string, error) {
 func (tq TemplatedQuery) EmitChParamNames() string {
 	sb := &strings.Builder{}
 	for _, input := range tq.Inputs {
+		// An Identifier is substituted into the query text, not bound; see
+		// EmitChIdentifierPrelude.
+		if tq.isIdentifier(input) {
+			continue
+		}
 		value := "params." + input.UpperName
 		if tq.isInlineParams() {
 			value = input.LowerName
@@ -199,4 +204,95 @@ func (tf TemplatedFile) needsClickHouseImport() bool {
 		}
 	}
 	return false
+}
+
+// isIdentifier reports whether input is an {…:Identifier} parameter.
+func (tq TemplatedQuery) isIdentifier(input TemplatedParam) bool {
+	chType, ok := input.RawName.Type.(ch.Type)
+	return ok && ch.IsIdentifier(chType)
+}
+
+// chIdentifierInputs are the query's {…:Identifier} parameters, in order.
+func (tq TemplatedQuery) chIdentifierInputs() []TemplatedParam {
+	var out []TemplatedParam
+	for _, input := range tq.Inputs {
+		if tq.isIdentifier(input) {
+			out = append(out, input)
+		}
+	}
+	return out
+}
+
+// EmitChHasIdentifiers reports whether the query names a table or column
+// through an {…:Identifier} parameter.
+func (tq TemplatedQuery) EmitChHasIdentifiers() bool {
+	return len(tq.chIdentifierInputs()) > 0
+}
+
+// EmitChSQLRef is what the query call passes as its SQL: the constant, or the
+// local the identifier substitution produced.
+func (tq TemplatedQuery) EmitChSQLRef() string {
+	if tq.EmitChHasIdentifiers() {
+		return "sql"
+	}
+	return tq.SQLVarName
+}
+
+// EmitChIdentifierPrelude emits the substitution that fills a query's
+// {…:Identifier} holes before it is sent.
+//
+// It has to happen here and not in the driver. ClickHouse binds an Identifier
+// itself, and safely, but clickhouse-go switches a query to server-side
+// parameters as soon as its text holds any {…:…} — and server-side parameters
+// travel as text the driver renders wrongly for time.Time, uuid.UUID and
+// decimal.Decimal. Leaving one Identifier for the server would silently break
+// every other parameter in the same query.
+func (tq TemplatedQuery) EmitChIdentifierPrelude() (string, error) {
+	idents := tq.chIdentifierInputs()
+	if len(idents) == 0 {
+		return "", nil
+	}
+
+	sb := &strings.Builder{}
+	sb.WriteString("\n\tsql, err := substituteIdentifiers(")
+	sb.WriteString(tq.SQLVarName)
+	sb.WriteString(", map[string]string{")
+	for i, input := range idents {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		value := "params." + input.UpperName
+		if tq.isInlineParams() {
+			value = input.LowerName
+		}
+		sb.WriteString(strconv.Quote(input.RawName.PgName))
+		sb.WriteString(": ")
+		sb.WriteString(value)
+	}
+	sb.WriteString("})\n\tif err != nil {\n\t\treturn ")
+
+	zero, err := tq.emitChZeroResult()
+	if err != nil {
+		return "", err
+	}
+	sb.WriteString(zero)
+	sb.WriteString("fmt.Errorf(")
+	sb.WriteString(strconv.Quote("query " + tq.Name + ": %w"))
+	sb.WriteString(", err)\n\t}")
+	return sb.String(), nil
+}
+
+// emitChZeroResult is what a method returns alongside an error, ready to be
+// followed by the error itself: "" for an :exec, "nil, " for a slice, and the
+// declared item for a :one.
+func (tq TemplatedQuery) emitChZeroResult() (string, error) {
+	switch tq.ResultKind {
+	case ast.ResultKindExec:
+		return "", nil
+	case ast.ResultKindOne:
+		// The :one body declares item before the query runs, so name it.
+		return "item, ", nil
+	default:
+		return "nil, ", nil
+	}
 }

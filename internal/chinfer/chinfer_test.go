@@ -31,7 +31,12 @@ CREATE TABLE cdr (
     subscription_id UUID,
     customer_id     Nullable(UUID),
     premium         Bool
-) ENGINE = MergeTree() ORDER BY (provider, a_num)
+) ENGINE = MergeTree() ORDER BY (provider, a_num);
+
+-- The stand-in for a {cdr_source:Identifier} parameter. Inference substitutes
+-- an identifier parameter's own name, so a query saying {cdr_source:Identifier}
+-- is described against a table called cdr_source.
+CREATE TABLE cdr_source AS cdr ENGINE = MergeTree() ORDER BY (provider, a_num)
 `
 
 func newInferrer(t *testing.T, opts ...Option) *Inferrer {
@@ -465,13 +470,16 @@ func TestInferrer_InferTypes_errors(t *testing.T) {
 			wantSub: "clickhouse rejected the query",
 		},
 		{
-			name: "identifier param cannot be inferred",
+			// An identifier parameter is described against a table of its own
+			// name. Without one there is nothing to resolve, and the error has
+			// to say that rather than repeat the server's "unknown table".
+			name: "identifier param with no stand-in table",
 			query: &ast.SourceQuery{
 				Name:        "IdentifierParam",
 				PreparedSQL: "SELECT * FROM {tbl:Identifier}",
 				ResultKind:  ast.ResultKindMany,
 			},
-			wantSub: "Identifier",
+			wantSub: "Create tbl in the database pggen generates against",
 		},
 		{
 			name: "conflicting param types",
@@ -493,5 +501,43 @@ func TestInferrer_InferTypes_errors(t *testing.T) {
 				t.Errorf("error = %q; want it to contain %q", err, tt.wantSub)
 			}
 		})
+	}
+}
+
+// TestInferrer_InferTypes_identifierParam covers the {…:Identifier} parameter,
+// which names a table rather than carrying a value.
+//
+// It cannot be bound for a DESCRIBE — there is no value that resolves to a
+// table — so inference substitutes the parameter's own name and the caller
+// declares a table of that name. This checks the substitution happens, that the
+// columns come from that table, and that an ordinary parameter alongside it is
+// still bound.
+func TestInferrer_InferTypes_identifierParam(t *testing.T) {
+	inf := newInferrer(t)
+
+	got, err := inf.InferTypes(&ast.SourceQuery{
+		Name:        "SumUnitsFrom",
+		PreparedSQL: "SELECT provider, sum(units) AS units FROM {cdr_source:Identifier} WHERE start_date >= {from:DateTime} GROUP BY provider",
+		ResultKind:  ast.ResultKindMany,
+	})
+	if err != nil {
+		t.Fatalf("InferTypes() error = %v", err)
+	}
+
+	wantCols := []string{"provider", "units"}
+	gotCols := []string{got.Outputs[0].PgName, got.Outputs[1].PgName}
+	if diff := cmp.Diff(wantCols, gotCols); diff != "" {
+		t.Errorf("output columns mismatch (-want +got):\n%s", diff)
+	}
+
+	// The identifier stays in Inputs: it is a parameter of the generated
+	// method, typed as the string the caller holds.
+	wantParams := []string{"cdr_source:Identifier", "from:DateTime"}
+	var gotParams []string
+	for _, in := range got.Inputs {
+		gotParams = append(gotParams, in.PgName+":"+in.Type.String())
+	}
+	if diff := cmp.Diff(wantParams, gotParams); diff != "" {
+		t.Errorf("input params mismatch (-want +got):\n%s", diff)
 	}
 }

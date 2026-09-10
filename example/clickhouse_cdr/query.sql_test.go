@@ -205,3 +205,74 @@ func TestFindDataUsageSQL_MaterializedIntoATempTable(t *testing.T) {
 	assert.Equal(t, "46700000001", rows[0].Msisdn)
 	assert.Equal(t, int64(4096), rows[0].DataBytes)
 }
+
+// TestSumUnitsFrom_ReadsTheTableItIsGiven covers the {…:Identifier} parameter.
+//
+// A table name cannot be bound like a value, so the generated method puts it
+// into the query text. Three things have to hold: the query reads whichever
+// table it is handed, the ordinary parameter beside it is still bound — which
+// is why pggen substitutes rather than letting ClickHouse bind the identifier
+// — and a value that is not a plain identifier is refused rather than quoted.
+func TestSumUnitsFrom_ReadsTheTableItIsGiven(t *testing.T) {
+	conn, _ := chtest.NewClickHouseDB(t, []string{"schema.sql"})
+	q := NewQuerier(conn)
+	ctx := context.Background()
+
+	start := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	row := func(table, provider string, units int64, at time.Time) {
+		t.Helper()
+		require.NoError(t, conn.Exec(ctx, "INSERT INTO "+table+
+			" (a_num, record_type, provider, units, charge, start_date, updated_at, subscription_id)"+
+			" VALUES ('46700000002', 'GPRS', ?, ?, 0, ?, ?, '11111111-1111-1111-1111-111111111111')",
+			provider, units, at, at))
+	}
+	row("cdr", "telia", 10, start)
+	row("cdr_archive", "telia", 99, start)
+
+	t.Run("the live table", func(t *testing.T) {
+		got, err := q.SumUnitsFrom(ctx, "cdr", start.Add(-time.Hour))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, int64(10), got[0].Units)
+	})
+
+	t.Run("the archive table, same query", func(t *testing.T) {
+		got, err := q.SumUnitsFrom(ctx, "cdr_archive", start.Add(-time.Hour))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, int64(99), got[0].Units)
+	})
+
+	// The identifier travels as text, so the bound parameter next to it has to
+	// keep working. A from after the record leaves nothing.
+	t.Run("the bound parameter still filters", func(t *testing.T) {
+		got, err := q.SumUnitsFrom(ctx, "cdr", start.Add(time.Hour))
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("a value that is not a plain identifier is refused", func(t *testing.T) {
+		for _, bad := range []string{
+			"cdr WHERE 1=1 --",
+			"cdr; DROP TABLE cdr",
+			"cdr`",
+			"",
+			"1cdr",
+		} {
+			_, err := q.SumUnitsFrom(ctx, bad, start)
+			require.Error(t, err, "SumUnitsFrom(%q)", bad)
+			assert.NotContains(t, err.Error(), "Unknown table",
+				"%q must be refused before it reaches the server", bad)
+		}
+	})
+
+	t.Run("a database-qualified name is allowed", func(t *testing.T) {
+		var db string
+		require.NoError(t, conn.QueryRow(ctx, "SELECT currentDatabase()").Scan(&db))
+
+		got, err := q.SumUnitsFrom(ctx, db+".cdr", start.Add(-time.Hour))
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, int64(10), got[0].Units)
+	})
+}

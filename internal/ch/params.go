@@ -100,6 +100,54 @@ func ScanParams(sql string) ([]Param, error) {
 	return params, nil
 }
 
+// IsIdentifier reports whether t is ClickHouse's Identifier parameter type,
+// which names a table or column rather than carrying a value.
+//
+// It is the one parameter type pggen substitutes into the query text instead of
+// binding: see SubstituteIdentifiers.
+func IsIdentifier(t Type) bool {
+	scalar, ok := t.(Scalar)
+	return ok && scalar.Name == "Identifier"
+}
+
+// SubstituteIdentifiers replaces each {name:Identifier} in sql with value(name),
+// leaving every other parameter alone. A name value returns "" for is left as
+// it was.
+//
+// ClickHouse can bind an Identifier parameter itself, and does it safely — it
+// quotes the value as a single identifier, so an injection attempt becomes an
+// unknown table rather than SQL. pggen cannot use that: clickhouse-go switches
+// a query to server-side parameters the moment its text contains any {…:…}, and
+// server-side parameters travel as text that the driver renders wrongly for
+// time.Time, uuid.UUID and decimal.Decimal — which is the whole reason
+// RewriteParams exists. One Identifier parameter would therefore break every
+// other parameter in the same query.
+//
+// So the identifier is substituted into the text before the driver sees it, and
+// the generated code checks the value is a plain identifier first.
+func SubstituteIdentifiers(sql string, value func(name string) string) (string, error) {
+	sb := &strings.Builder{}
+	sb.Grow(len(sql))
+	err := scanSQL(sql,
+		func(text string) { sb.WriteString(text) },
+		func(p Param) error {
+			if v := value(p.Name); IsIdentifier(p.Type) && v != "" {
+				sb.WriteString(v)
+				return nil
+			}
+			sb.WriteString("{")
+			sb.WriteString(p.Name)
+			sb.WriteString(":")
+			sb.WriteString(p.Type.String())
+			sb.WriteString("}")
+			return nil
+		})
+	if err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
 // RewriteParams turns each {name:Type} into cast(@name AS Type).
 //
 // It exists because ClickHouse's server-side parameters travel as text, and
@@ -117,6 +165,15 @@ func RewriteParams(sql string) (string, error) {
 	err := scanSQL(sql,
 		func(text string) { sb.WriteString(text) },
 		func(p Param) error {
+			// An Identifier names a table or column, so there is nothing to
+			// cast and nothing to bind. It stays in the text as a hole the
+			// generated code fills; see SubstituteIdentifiers.
+			if IsIdentifier(p.Type) {
+				sb.WriteString("{")
+				sb.WriteString(p.Name)
+				sb.WriteString(":Identifier}")
+				return nil
+			}
 			sb.WriteString("cast(@")
 			sb.WriteString(p.Name)
 			sb.WriteString(" AS ")

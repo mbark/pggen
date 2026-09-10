@@ -122,9 +122,24 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 // of the query sidesteps the whole namespace; the answer is the same either
 // way, since the server reads the parameters' types and not their names.
 func (inf *Inferrer) prepare(sql string, params []ch.Param) (string, []any, error) {
+	// An Identifier names a table or column, so the server has to see a real
+	// name to resolve the query. The stand-in is the parameter's own name: a
+	// query saying {usage:Identifier} is described against a table called
+	// usage, which the caller creates in the database it generates against.
+	// Nothing else would do — pggen cannot invent a name that resolves, and a
+	// name it was told separately would be one more thing to keep in step with
+	// the query.
+	sql, err := ch.SubstituteIdentifiers(sql, func(name string) string { return name })
+	if err != nil {
+		return "", nil, err
+	}
+
 	args := make([]any, 0, len(params))
 	names := make(map[string]string, len(params))
 	for i, p := range params {
+		if ch.IsIdentifier(p.Type) {
+			continue
+		}
 		lit, err := ch.ZeroLiteral(p.Type)
 		if err != nil {
 			return "", nil, err
@@ -132,7 +147,7 @@ func (inf *Inferrer) prepare(sql string, params []ch.Param) (string, []any, erro
 		names[p.Name] = fmt.Sprintf("%s%d", describeParamPrefix, i)
 		args = append(args, clickhouse.Named(names[p.Name], lit))
 	}
-	sql, err := ch.RenameParams(sql, func(name string) string { return names[name] })
+	sql, err = ch.RenameParams(sql, func(name string) string { return names[name] })
 	if err != nil {
 		return "", nil, err
 	}
@@ -276,7 +291,7 @@ func (inf *Inferrer) describe(ctx context.Context, sql string, params []ch.Param
 
 	rows, err := inf.conn.Query(inf.queryCtx(ctx), "DESCRIBE ("+sql+")", args...)
 	if err != nil {
-		return nil, describeError(err)
+		return nil, identifierHint(describeError(err), params)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -322,6 +337,30 @@ func (inf *Inferrer) describe(ctx context.Context, sql string, params []ch.Param
 		return nil, describeError(err)
 	}
 	return outputs, nil
+}
+
+// identifierHint adds what to do about a failed describe of a query carrying an
+// {…:Identifier} parameter.
+//
+// The stand-in for such a parameter is its own name, so the query is described
+// against a table the caller has to create. When it does not exist the server
+// answers "Unknown table expression identifier \'usage\'", which is true and
+// useless: nothing in it says the name came from a parameter, or that creating
+// a table by that name is the fix.
+func identifierHint(err error, params []ch.Param) error {
+	var names []string
+	for _, p := range params {
+		if ch.IsIdentifier(p.Type) {
+			names = append(names, p.Name)
+		}
+	}
+	if len(names) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w\n\nthis query has the identifier parameter(s) %s, which are described "+
+		"against a table of the same name. Create %s in the database pggen generates against, "+
+		"shaped like the tables the query will really read",
+		err, strings.Join(names, ", "), strings.Join(names, " and "))
 }
 
 // describeError unwraps a ClickHouse server exception into something that

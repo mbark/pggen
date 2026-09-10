@@ -285,3 +285,71 @@ func TestRenameParams_reportsBadParam(t *testing.T) {
 		t.Errorf("RenameParams error = %v, want it to mention the missing type", err)
 	}
 }
+
+func TestSubstituteIdentifiers(t *testing.T) {
+	tests := []struct {
+		name  string
+		sql   string
+		value func(string) string
+		want  string
+	}{
+		{
+			name:  "an identifier is replaced",
+			sql:   "SELECT * FROM {tbl:Identifier}",
+			value: func(name string) string { return name },
+			want:  "SELECT * FROM tbl",
+		},
+		{
+			// The whole reason this exists: an ordinary parameter beside an
+			// identifier must survive to be bound client-side.
+			name:  "an ordinary parameter is left alone",
+			sql:   "SELECT * FROM {tbl:Identifier} WHERE n > {min:Int64}",
+			value: func(name string) string { return "cdr" },
+			want:  "SELECT * FROM cdr WHERE n > {min:Int64}",
+		},
+		{
+			name:  "several identifiers",
+			sql:   "SELECT * FROM {a:Identifier} JOIN {b:Identifier} USING (id)",
+			value: func(name string) string { return "t_" + name },
+			want:  "SELECT * FROM t_a JOIN t_b USING (id)",
+		},
+		{
+			name:  "an identifier with no value is left as it was",
+			sql:   "SELECT * FROM {tbl:Identifier}",
+			value: func(string) string { return "" },
+			want:  "SELECT * FROM {tbl:Identifier}",
+		},
+		{
+			// Braces inside a literal are not parameters, which is what
+			// scanSQL is for.
+			name:  "a brace inside a string literal",
+			sql:   "SELECT '{tbl:Identifier}' FROM {tbl:Identifier}",
+			value: func(string) string { return "cdr" },
+			want:  "SELECT '{tbl:Identifier}' FROM cdr",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SubstituteIdentifiers(tt.sql, tt.value)
+			if err != nil {
+				t.Fatalf("SubstituteIdentifiers() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("SubstituteIdentifiers() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// An Identifier names a table, so there is nothing to cast it to and nothing to
+// bind. It stays in the text as a hole the generated code fills.
+func TestRewriteParams_leavesIdentifiersAlone(t *testing.T) {
+	got, err := RewriteParams("SELECT * FROM {tbl:Identifier} WHERE n > {min:Int64}")
+	if err != nil {
+		t.Fatalf("RewriteParams() error = %v", err)
+	}
+	want := "SELECT * FROM {tbl:Identifier} WHERE n > cast(@min AS Int64)"
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("RewriteParams() mismatch (-want +got):\n%s", diff)
+	}
+}
