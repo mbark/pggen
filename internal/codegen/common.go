@@ -50,6 +50,10 @@ type TypedQuery struct {
 	// User-specified output row struct name, like "ItemRow". If set, multiple
 	// queries can share the same output struct.
 	OutputType string
+	// User-specified exported name for the query's SQL constant, like
+	// "ItemsSQL". Empty means the constant keeps its unexported default name
+	// and only the generated method reads it.
+	SQLConst string
 	// Set when this query is one fanned-out statement of a paginate=<spec>
 	// query. VariantGroup is the public dispatcher name; VariantKey identifies
 	// the sort key + direction. Empty VariantGroup means an ordinary query.

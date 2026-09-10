@@ -16,6 +16,10 @@ import (
 type Querier interface {
 	// Sums data usage per subscriber over a time window. Inputs use ClickHouse's
 	// own parameter syntax, so this file also runs as-is in clickhouse-client.
+	//
+	// sql=FindDataUsageSQL also emits the query text as an exported constant, for
+	// a caller that has to put the query inside another statement rather than run
+	// it — see query.sql_test.go, which materializes it into a temporary table.
 	FindDataUsage(ctx context.Context, params FindDataUsageParams) ([]FindDataUsageRow, error)
 
 	// Returns every column, so the generated row struct covers the whole type
@@ -73,7 +77,7 @@ type ChargeRow struct {
 	LastEnd *time.Time      `ch:"last_end" json:"last_end"`
 }
 
-const findDataUsageSQL = `SELECT
+const FindDataUsageSQL = `SELECT
     a_num                AS msisdn,
     sum(units)           AS data_bytes,
     sum(charge)          AS total_charge,
@@ -83,7 +87,7 @@ WHERE a_num IN cast(@msisdns AS Array(String))
   AND start_date >= cast(@from AS DateTime)
   AND start_date < cast(@to AS DateTime)
 GROUP BY a_num
-ORDER BY a_num;`
+ORDER BY a_num`
 
 type FindDataUsageParams struct {
 	Msisdns []string  `json:"msisdns"`
@@ -102,7 +106,7 @@ type FindDataUsageRow struct {
 func (q *DBQuerier) FindDataUsage(ctx context.Context, params FindDataUsageParams) ([]FindDataUsageRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindDataUsage")
 	var items []FindDataUsageRow
-	if err := q.conn.Select(ctx, &items, findDataUsageSQL,
+	if err := q.conn.Select(ctx, &items, FindDataUsageSQL,
 		clickhouse.Named("msisdns", params.Msisdns),
 		clickhouse.Named("from", params.From),
 		clickhouse.Named("to", params.To),

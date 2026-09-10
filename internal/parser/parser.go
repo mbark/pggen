@@ -311,9 +311,21 @@ func parsePragmas(allPragmas string) (ast.Pragmas, error) {
 				return ast.Pragmas{}, fmt.Errorf("paginate spec name must not be empty")
 			}
 			qp.Paginate = val
+		case "sql":
+			if err := validateGoExportedIdent(val, "sql constant"); err != nil {
+				return ast.Pragmas{}, err
+			}
+			qp.SQLConst = val
 		default:
 			return ast.Pragmas{}, fmt.Errorf("unsupported pramga %q", key)
 		}
+	}
+	// A paginated query is not one statement, so one constant cannot name its
+	// SQL. Which of the fanned-out variants would it hold?
+	if qp.Paginate != "" && qp.SQLConst != "" {
+		return ast.Pragmas{}, fmt.Errorf("sql=%s cannot be used with paginate=%s: "+
+			"a paginated query is fanned out into one statement per sort key, so "+
+			"there is no single SQL for the constant to hold", qp.SQLConst, qp.Paginate)
 	}
 	return qp, nil
 }
@@ -345,18 +357,25 @@ func validateProtoMsgType(val string) (string, error) {
 
 // validateOutputType checks that val is a valid Go exported identifier.
 func validateOutputType(val string) error {
+	return validateGoExportedIdent(val, "output type")
+}
+
+// validateGoExportedIdent checks that val names something a generated file can
+// declare and another package can reach: an exported Go identifier. what names
+// the pragma in the error, like "output type".
+func validateGoExportedIdent(val, what string) error {
 	if val == "" {
-		return fmt.Errorf("output type must not be empty")
+		return fmt.Errorf("%s must not be empty", what)
 	}
 	for i, r := range val {
 		if i == 0 {
 			if r < 'A' || r > 'Z' {
-				return fmt.Errorf("output type must start with an uppercase letter; got %q", val)
+				return fmt.Errorf("%s must start with an uppercase letter; got %q", what, val)
 			}
 			continue
 		}
 		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
-			return fmt.Errorf("output type must only contain [a-zA-Z0-9_]; got %q", val)
+			return fmt.Errorf("%s must only contain [a-zA-Z0-9_]; got %q", what, val)
 		}
 	}
 	return nil

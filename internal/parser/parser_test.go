@@ -5,6 +5,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/mbark/pggen/internal/ast"
 	gotok "go/token"
+	"strings"
 	"testing"
 )
 
@@ -144,6 +145,18 @@ func TestParseFile_Queries(t *testing.T) {
 				Pragmas:     ast.Pragmas{OutputType: "ItemRow"},
 			},
 		},
+		{
+			"-- name: FindItems :many sql=FindItemsSQL\nSELECT 1;",
+			&ast.SourceQuery{
+				Name:        "FindItems",
+				Doc:         &ast.CommentGroup{List: []*ast.LineComment{{Text: "-- name: FindItems :many sql=FindItemsSQL"}}},
+				SourceSQL:   "SELECT 1;",
+				PreparedSQL: "SELECT 1;",
+				ParamNames:  nil,
+				ResultKind:  ast.ResultKindMany,
+				Pragmas:     ast.Pragmas{SQLConst: "FindItemsSQL"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -174,6 +187,51 @@ func TestParseFile_Queries_Fuzz(t *testing.T) {
 			_, err := ParseFile(gotok.NewFileSet(), "", tt.src, Trace)
 			if err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestParseFile_Pragmas_Invalid covers the pragmas a query file can get wrong.
+// Each has to fail at generation, where the message can say what to write
+// instead, rather than in the generated Go.
+func TestParseFile_Pragmas_Invalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name:    "sql constant must be exported",
+			src:     "-- name: FindItems :many sql=findItemsSQL\nSELECT 1;",
+			wantErr: "sql constant must start with an uppercase letter",
+		},
+		{
+			name:    "sql constant must be an identifier",
+			src:     "-- name: FindItems :many sql=Find.Items\nSELECT 1;",
+			wantErr: "sql constant must only contain",
+		},
+		{
+			// The fan-out makes one statement per sort key, so the constant
+			// would have to hold one of them and silently not the others.
+			name:    "sql with paginate",
+			src:     "-- name: FindItems :many output=ItemRow paginate=items_sort sql=FindItemsSQL\nSELECT 1;",
+			wantErr: "cannot be used with paginate=items_sort",
+		},
+		{
+			name:    "unknown pragma",
+			src:     "-- name: FindItems :many nope=1\nSELECT 1;",
+			wantErr: "unsupported pramga",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseFile(gotok.NewFileSet(), "", tt.src, Trace)
+			if err == nil {
+				t.Fatalf("ParseFile() succeeded, want error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseFile() error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
 	}

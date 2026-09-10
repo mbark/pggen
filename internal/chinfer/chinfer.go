@@ -104,6 +104,7 @@ func (inf *Inferrer) InferTypes(query *ast.SourceQuery) (codegen.TypedQuery, err
 		Outputs:      outputs,
 		ProtobufType: query.Pragmas.ProtobufType,
 		OutputType:   query.Pragmas.OutputType,
+		SQLConst:     query.Pragmas.SQLConst,
 		VariantGroup: query.VariantGroup,
 		VariantKey:   query.VariantKey,
 	}, nil

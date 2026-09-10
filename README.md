@@ -519,6 +519,37 @@ Examples embedded in the repo:
     All queries sharing the same `output` value must return the same set of column
     names with compatible types. Column order in the queries does not matter.
 
+-   **The query as a constant**: A generated method runs its query. When a caller
+    needs the query as *text* instead — to put inside a statement pggen does not
+    generate — the `sql` pragma also emits it as an exported constant.
+
+    ```sql
+    -- name: FindDataUsage :many sql=FindDataUsageSQL
+    SELECT a_num AS msisdn, sum(units) AS data_bytes
+    FROM cdr
+    WHERE a_num IN {msisdns:Array(String)}
+    GROUP BY a_num;
+    ```
+
+    ```go
+    const FindDataUsageSQL = `SELECT a_num AS msisdn, sum(units) AS data_bytes
+    FROM cdr
+    WHERE a_num IN cast(@msisdns AS Array(String))
+    GROUP BY a_num`
+    ```
+
+    The alternative is a second copy of the query kept by hand, which nothing
+    checks against the first. The constant a query exports has **no statement
+    terminator**, so it can be spliced into a `CREATE TABLE … AS (…)` or an
+    `EXPLAIN`; it still carries the query's parameters, so whatever runs it binds
+    them exactly as the generated method would. `example/clickhouse_cdr`
+    materializes one into a temporary table.
+
+    The name must be an exported Go identifier and unique in the generated
+    package. `sql=` cannot be combined with `paginate=`: a paginated query is
+    fanned out into one statement per sort key, so there is no single SQL for a
+    constant to hold.
+
 -   **Keyset / ordering pagination**: a list query that supports runtime-chosen
     sorting normally needs a `CASE WHEN $flag THEN col END` block in both the
     `ORDER BY` and the cursor `WHERE` — verbose, easy to desync, and not

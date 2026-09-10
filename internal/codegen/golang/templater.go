@@ -84,6 +84,10 @@ func (tm Templater) TemplateAll(files []codegen.QueryFile) ([]TemplatedFile, err
 		allDeclarers.AddAll(NewTypeRegistrationDeclarer(names))
 	}
 
+	if err := validateSQLConstNames(goQueryFiles); err != nil {
+		return nil, err
+	}
+
 	// Build shared row struct declarers for queries with output= pragma.
 	sharedRowDeclarers, err := tm.buildSharedRowDeclarers(goQueryFiles)
 	if err != nil {
@@ -270,6 +274,7 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			Outputs:          outputs,
 			InlineParamCount: tm.inlineParamCount,
 			OutputType:       qd.query.OutputType,
+			SQLConst:         qd.query.SQLConst,
 			VariantGroup:     qd.query.VariantGroup,
 			VariantKey:       qd.query.VariantKey,
 		}
@@ -277,6 +282,18 @@ func (tm Templater) templateFile(file codegen.QueryFile, isLeader bool) (Templat
 			// Name the SQL const after the unexported helper so the generated
 			// code reads cleanly and stays unique per variant.
 			tq.SQLVarName = tq.VariantMethodName() + "SQL"
+		}
+		// sql=<Name> exports the constant under the name the query chose, for a
+		// caller that needs the query as text and not only as a method.
+		//
+		// Such a caller puts the text inside another statement — a
+		// CREATE TABLE ... AS (…), an EXPLAIN — where a statement terminator is
+		// a syntax error, so the constant drops it. Nothing else notices: a
+		// driver is handed one statement, and both Postgres and ClickHouse run
+		// it terminator or not.
+		if qd.query.SQLConst != "" {
+			tq.SQLVarName = qd.query.SQLConst
+			tq.PreparedSQL = strings.TrimSuffix(strings.TrimRight(tq.PreparedSQL, " \t\n"), ";")
 		}
 		queries = append(queries, tq)
 	}
@@ -528,4 +545,30 @@ func removeImport(imports []ImportPkg, pkgPath string) []ImportPkg {
 		}
 	}
 	return imports
+}
+
+// validateSQLConstNames rejects two queries whose sql=<Name> pragmas name the
+// same constant.
+//
+// Every generated file is in one package, so two files naming the same constant
+// would emit a redeclaration — a compile error in the generated code, which is
+// the one place an error is expensive to read. The pragma is explicit, so this
+// can only be a mistake.
+func validateSQLConstNames(files []TemplatedFile) error {
+	type owner struct{ file, query string }
+	byName := make(map[string]owner)
+	for _, f := range files {
+		for _, q := range append(append([]TemplatedQuery{}, f.Queries...), f.Variants...) {
+			if q.SQLConst == "" {
+				continue
+			}
+			if prev, ok := byName[q.SQLConst]; ok {
+				return fmt.Errorf("two queries both declare sql=%s: %s in %s and %s in %s; "+
+					"a SQL constant name must be unique in the generated package",
+					q.SQLConst, prev.query, prev.file, q.Name, f.SourcePath)
+			}
+			byName[q.SQLConst] = owner{file: f.SourcePath, query: q.Name}
+		}
+	}
+	return nil
 }

@@ -16,6 +16,10 @@ import (
 // to parse the results.
 type Querier interface {
 	// FindAuthorById finds one (or zero) authors by ID.
+	//
+	// sql=FindAuthorByIDSQL also emits the query text as an exported constant, for
+	// a caller that has to put the query somewhere pggen does not generate, like
+	// inside a CREATE TABLE ... AS or an EXPLAIN.
 	FindAuthorByID(ctx context.Context, authorID int32) (FindAuthorByIDRow, error)
 	// FindAuthorByIDBatch enqueues a FindAuthorByID query into batch to be executed
 	// later by the batch.
@@ -146,7 +150,7 @@ func RegisterTypes(ctx context.Context, conn *pgx.Conn) error {
 	return err
 }
 
-const findAuthorByIDSQL = `SELECT * FROM author WHERE author_id = $1;`
+const FindAuthorByIDSQL = `SELECT * FROM author WHERE author_id = $1`
 
 type FindAuthorByIDRow struct {
 	AuthorID  int32   `json:"author_id"`
@@ -158,7 +162,7 @@ type FindAuthorByIDRow struct {
 // FindAuthorByID implements Querier.FindAuthorByID.
 func (q *DBQuerier) FindAuthorByID(ctx context.Context, authorID int32) (FindAuthorByIDRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindAuthorByID")
-	row := q.conn.QueryRow(ctx, findAuthorByIDSQL, authorID)
+	row := q.conn.QueryRow(ctx, FindAuthorByIDSQL, authorID)
 	var item FindAuthorByIDRow
 	if err := row.Scan(&item.AuthorID, &item.FirstName, &item.LastName, &item.Suffix); err != nil {
 		return item, fmt.Errorf("query FindAuthorByID: %w", err)
@@ -168,7 +172,7 @@ func (q *DBQuerier) FindAuthorByID(ctx context.Context, authorID int32) (FindAut
 
 // FindAuthorByIDBatch implements Querier.FindAuthorByIDBatch.
 func (q *DBQuerier) FindAuthorByIDBatch(batch genericBatch, authorID int32) {
-	batch.Queue(findAuthorByIDSQL, authorID)
+	batch.Queue(FindAuthorByIDSQL, authorID)
 }
 
 // FindAuthorByIDScan implements Querier.FindAuthorByIDScan.

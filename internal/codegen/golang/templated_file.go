@@ -159,6 +159,7 @@ type TemplatedQuery struct {
 	Outputs          []TemplatedColumn // output columns of the query
 	InlineParamCount int               // inclusive count of params that will be inlined
 	OutputType       string            // user-specified shared output row struct name, empty if not set
+	SQLConst         string            // user-specified exported name for the SQL constant, empty if not set
 	VariantGroup     string            // dispatcher name when this query is a paginate variant, else empty
 	VariantKey       ast.VariantKey    // identifies the sort key + direction for a variant
 }

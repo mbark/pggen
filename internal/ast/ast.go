@@ -78,6 +78,7 @@ type Pragmas struct {
 	ProtobufType string // package qualified protocol buffer message type to use for output rows
 	OutputType   string // user-specified output row struct name, e.g. "ItemRow"
 	Paginate     string // name of the -- sort: spec to fan this query out over, e.g. "payments_sort"
+	SQLConst     string // exported name for the query's SQL constant, e.g. "ItemsSQL"
 }
 
 // SortSpec is a keyset-pagination spec declared in a "-- sort: <name>" comment

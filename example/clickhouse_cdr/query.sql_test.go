@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/mbark/pggen/internal/chtest"
 	"github.com/mbark/pggen/internal/ptrs"
@@ -156,4 +157,51 @@ func TestQuerier(t *testing.T) {
 	t.Run("the querier satisfies Querier", func(t *testing.T) {
 		var _ Querier = q
 	})
+}
+
+// TestFindDataUsageSQL_MaterializedIntoATempTable uses the constant the sql=
+// pragma exports.
+//
+// A generated method runs its query. This is the other thing a caller can want:
+// the query as text, to put inside a statement pggen does not generate — here a
+// CREATE TEMPORARY TABLE ... AS (…), which is how you materialize an expensive
+// SELECT once and then read it back several times. Without the pragma the
+// caller keeps a second copy of the SQL, and nothing checks the two agree.
+func TestFindDataUsageSQL_MaterializedIntoATempTable(t *testing.T) {
+	conn, _ := chtest.NewClickHouseDB(t, []string{"schema.sql"})
+	q := NewQuerier(conn)
+	ctx := context.Background()
+
+	start := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	custID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	require.NoError(t, q.InsertCDR(ctx, InsertCDRParams{
+		ANum:           "46700000001",
+		RecordType:     "GPRS",
+		Provider:       "telia",
+		Units:          4096,
+		Charge:         decimal.RequireFromString("2.500000"),
+		StartDate:      start,
+		UpdatedAt:      start,
+		Labels:         []string{},
+		Metadata:       map[string]string{},
+		SubscriptionID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		// Nullable(UUID) is a *uuid.UUID, and clickhouse-go v2.48.0 panics
+		// calling Value on a nil one, so give it a value.
+		CustomerID: &custID,
+	}))
+
+	// The constant still carries the query's parameters, so the statement that
+	// wraps it binds them exactly as the generated method would.
+	err := conn.Exec(ctx, "CREATE TEMPORARY TABLE usage AS ("+FindDataUsageSQL+")",
+		clickhouse.Named("msisdns", []string{"46700000001"}),
+		clickhouse.Named("from", start.Add(-time.Hour)),
+		clickhouse.Named("to", start.Add(time.Hour)),
+	)
+	require.NoError(t, err, "materialize FindDataUsageSQL")
+
+	var rows []FindDataUsageRow
+	require.NoError(t, conn.Select(ctx, &rows, "SELECT * FROM usage"))
+	require.Len(t, rows, 1)
+	assert.Equal(t, "46700000001", rows[0].Msisdn)
+	assert.Equal(t, int64(4096), rows[0].DataBytes)
 }

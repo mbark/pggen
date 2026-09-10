@@ -1,5 +1,9 @@
 -- FindAuthorById finds one (or zero) authors by ID.
--- name: FindAuthorByID :one
+--
+-- sql=FindAuthorByIDSQL also emits the query text as an exported constant, for
+-- a caller that has to put the query somewhere pggen does not generate, like
+-- inside a CREATE TABLE ... AS or an EXPLAIN.
+-- name: FindAuthorByID :one sql=FindAuthorByIDSQL
 SELECT * FROM author WHERE author_id = pggen.arg('AuthorID');
 
 -- FindAuthors finds authors by first name.

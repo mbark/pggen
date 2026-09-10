@@ -1,6 +1,10 @@
 -- Sums data usage per subscriber over a time window. Inputs use ClickHouse's
 -- own parameter syntax, so this file also runs as-is in clickhouse-client.
--- name: FindDataUsage :many
+--
+-- sql=FindDataUsageSQL also emits the query text as an exported constant, for
+-- a caller that has to put the query inside another statement rather than run
+-- it — see query.sql_test.go, which materializes it into a temporary table.
+-- name: FindDataUsage :many sql=FindDataUsageSQL
 SELECT
     a_num                AS msisdn,
     sum(units)           AS data_bytes,
