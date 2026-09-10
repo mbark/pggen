@@ -444,7 +444,13 @@ Examples embedded in the repo:
         --go-type 'text=*github.com/jschaf/pggen/mytype.String' \
         --go-type '_text=[]*github.com/jschaf/pggen/mytype.String'
     ```
-    
+
+    *Qualified* means the full import path, not the short package name that
+    the generated file will read as. `*github.com/jackc/pgx/v5/pgtype.UUID`,
+    never `*pgtype.UUID` — pggen takes everything before the last dot as the
+    package path, so the short form asks for a package named `pgtype`, and
+    pggen rejects it rather than generate a file that will not compile.
+
     pgx must be able to decode the Postgres type using the given Go type. That 
     means the Go type must fulfill at least one of following:
     

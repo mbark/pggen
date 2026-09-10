@@ -211,9 +211,14 @@ func ParseOpaqueType(qualType string, sqlType sqltype.Type) (Type, error) {
 	var typ Type = &OpaqueType{Name: name}
 
 	if isQualifiedType := idx != -1; isQualifiedType {
-		pkgPath := bs[:idx]
+		pkgPath := string(bs[:idx])
+		if !IsImportPath(pkgPath) {
+			return nil, fmt.Errorf("package path %q in Go type %q is not an import path; "+
+				"a qualified type must name the package in full, like "+
+				"\"*github.com/jackc/pgx/v5/pgtype.UUID\"", pkgPath, qualType)
+		}
 		typ = &ImportType{
-			PkgPath: string(pkgPath),
+			PkgPath: pkgPath,
 			Type:    typ,
 		}
 	}
