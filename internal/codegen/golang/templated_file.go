@@ -60,7 +60,11 @@ func (pg PaginateGroup) representative() TemplatedQuery { return pg.Variants[0] 
 
 // EmitResultType returns the dispatcher result type, e.g. "[]PaymentRow".
 func (pg PaginateGroup) EmitResultType() (string, error) {
-	return pg.representative().EmitResultType()
+	rep := pg.representative()
+	if rep.Dialect == codegen.DialectClickHouse {
+		return rep.EmitChResultType()
+	}
+	return rep.EmitResultType()
 }
 
 // EmitSortKeyConsts emits the sort-key string constants.
@@ -68,11 +72,21 @@ func (pg PaginateGroup) EmitSortKeyConsts() string {
 	if len(pg.SortKeyConsts) == 0 {
 		return ""
 	}
+	// Generated code is not run through gofmt, so the columns are aligned
+	// here, the same way a row struct's fields are.
+	nameWidth := 0
+	for _, c := range pg.SortKeyConsts {
+		if n := len(c.ConstName); n > nameWidth {
+			nameWidth = n
+		}
+	}
+
 	sb := &strings.Builder{}
 	sb.WriteString("\n\nconst (\n")
 	for _, c := range pg.SortKeyConsts {
 		sb.WriteString("\t")
 		sb.WriteString(c.ConstName)
+		sb.WriteString(strings.Repeat(" ", nameWidth-len(c.ConstName)))
 		sb.WriteString(" = ")
 		sb.WriteString(strconv.Quote(c.Value))
 		sb.WriteRune('\n')
@@ -84,21 +98,42 @@ func (pg PaginateGroup) EmitSortKeyConsts() string {
 // EmitParamStruct emits the unified params struct: the union of all variant
 // inputs plus the synthetic SortKey and Descending dispatch fields.
 func (pg PaginateGroup) EmitParamStruct() string {
+	type field struct{ name, typ, tag string }
+	fields := make([]field, 0, len(pg.UnifiedInputs)+2)
+	for _, in := range pg.UnifiedInputs {
+		fields = append(fields, field{in.UpperName, in.QualType, strconv.Quote(in.RawName.PgName)})
+	}
+	fields = append(fields,
+		field{"SortKey", "string", `"sort_key"`},
+		field{"Descending", "bool", `"descending"`},
+	)
+
+	// Generated code is not run through gofmt, so the columns are aligned
+	// here, the same way a row struct's fields are.
+	nameWidth, typeWidth := 0, 0
+	for _, f := range fields {
+		if n := len(f.name); n > nameWidth {
+			nameWidth = n
+		}
+		if n := len(f.typ); n > typeWidth {
+			typeWidth = n
+		}
+	}
+
 	sb := &strings.Builder{}
 	sb.WriteString("\n\ntype ")
 	sb.WriteString(pg.ParamsTypeName)
 	sb.WriteString(" struct {\n")
-	for _, in := range pg.UnifiedInputs {
+	for _, f := range fields {
 		sb.WriteString("\t")
-		sb.WriteString(in.UpperName)
-		sb.WriteString(" ")
-		sb.WriteString(in.QualType)
-		sb.WriteString(" `json:")
-		sb.WriteString(strconv.Quote(in.RawName.PgName))
+		sb.WriteString(f.name)
+		sb.WriteString(strings.Repeat(" ", nameWidth-len(f.name)+1))
+		sb.WriteString(f.typ)
+		sb.WriteString(strings.Repeat(" ", typeWidth-len(f.typ)+1))
+		sb.WriteString("`json:")
+		sb.WriteString(f.tag)
 		sb.WriteString("`\n")
 	}
-	sb.WriteString("\tSortKey string `json:\"sort_key\"`\n")
-	sb.WriteString("\tDescending bool `json:\"descending\"`\n")
 	sb.WriteString("}")
 	return sb.String()
 }

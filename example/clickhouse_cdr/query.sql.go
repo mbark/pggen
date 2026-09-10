@@ -58,6 +58,8 @@ type Querier interface {
 	// chgen describes this against a table named after the parameter, cdr_source,
 	// which schema.sql declares.
 	SumUnitsFrom(ctx context.Context, cdrSource string, from time.Time) ([]SumUnitsFromRow, error)
+
+	PageCDRs(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error)
 }
 
 var _ Querier = &DBQuerier{}
@@ -123,6 +125,12 @@ func checkIdentifier(param, value string) error {
 		}
 	}
 	return nil
+}
+
+type CDRPageRow struct {
+	ANum      string    `ch:"a_num"      json:"a_num"`
+	Units     int64     `ch:"units"      json:"units"`
+	StartDate time.Time `ch:"start_date" json:"start_date"`
 }
 
 type ChargeRow struct {
@@ -401,4 +409,162 @@ func (q *DBQuerier) SumUnitsFrom(ctx context.Context, cdrSource string, from tim
 		return nil, fmt.Errorf("query SumUnitsFrom: %w", err)
 	}
 	return items, nil
+}
+
+const pageCDRsDefaultSQL = `SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = cast(@provider AS String)
+  AND (a_num > cast(@after_a_num AS Nullable(String))
+        OR (cast(@after_a_num AS Nullable(String)) IS NULL))
+ORDER BY a_num ASC
+LIMIT cast(@limit AS UInt32);`
+
+func (q *DBQuerier) pageCDRsDefault(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "PageCDRsDefault")
+	var items []CDRPageRow
+	if err := q.conn.Select(ctx, &items, pageCDRsDefaultSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("after_a_num", params.AfterANum),
+		clickhouse.Named("limit", params.Limit),
+	); err != nil {
+		return nil, fmt.Errorf("query PageCDRsDefault: %w", err)
+	}
+	return items, nil
+}
+
+const pageCDRsStartDateDescSQL = `SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = cast(@provider AS String)
+  AND ((start_date, a_num) < (cast(@after_start AS Nullable(DateTime)), cast(@after_a_num AS Nullable(String)))
+        OR (cast(@after_start AS Nullable(DateTime)) IS NULL AND cast(@after_a_num AS Nullable(String)) IS NULL))
+ORDER BY start_date DESC, a_num DESC
+LIMIT cast(@limit AS UInt32);`
+
+func (q *DBQuerier) pageCDRsStartDateDesc(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "PageCDRsStartDateDesc")
+	var items []CDRPageRow
+	if err := q.conn.Select(ctx, &items, pageCDRsStartDateDescSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("after_start", params.AfterStart),
+		clickhouse.Named("after_a_num", params.AfterANum),
+		clickhouse.Named("limit", params.Limit),
+	); err != nil {
+		return nil, fmt.Errorf("query PageCDRsStartDateDesc: %w", err)
+	}
+	return items, nil
+}
+
+const pageCDRsStartDateAscSQL = `SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = cast(@provider AS String)
+  AND ((start_date, a_num) > (cast(@after_start AS Nullable(DateTime)), cast(@after_a_num AS Nullable(String)))
+        OR (cast(@after_start AS Nullable(DateTime)) IS NULL AND cast(@after_a_num AS Nullable(String)) IS NULL))
+ORDER BY start_date ASC, a_num ASC
+LIMIT cast(@limit AS UInt32);`
+
+func (q *DBQuerier) pageCDRsStartDateAsc(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "PageCDRsStartDateAsc")
+	var items []CDRPageRow
+	if err := q.conn.Select(ctx, &items, pageCDRsStartDateAscSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("after_start", params.AfterStart),
+		clickhouse.Named("after_a_num", params.AfterANum),
+		clickhouse.Named("limit", params.Limit),
+	); err != nil {
+		return nil, fmt.Errorf("query PageCDRsStartDateAsc: %w", err)
+	}
+	return items, nil
+}
+
+const pageCDRsUnitsDescSQL = `SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = cast(@provider AS String)
+  AND ((units, a_num) < (cast(@after_units AS Nullable(Int64)), cast(@after_a_num AS Nullable(String)))
+        OR (cast(@after_units AS Nullable(Int64)) IS NULL AND cast(@after_a_num AS Nullable(String)) IS NULL))
+ORDER BY units DESC, a_num DESC
+LIMIT cast(@limit AS UInt32);`
+
+func (q *DBQuerier) pageCDRsUnitsDesc(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "PageCDRsUnitsDesc")
+	var items []CDRPageRow
+	if err := q.conn.Select(ctx, &items, pageCDRsUnitsDescSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("after_units", params.AfterUnits),
+		clickhouse.Named("after_a_num", params.AfterANum),
+		clickhouse.Named("limit", params.Limit),
+	); err != nil {
+		return nil, fmt.Errorf("query PageCDRsUnitsDesc: %w", err)
+	}
+	return items, nil
+}
+
+const pageCDRsUnitsAscSQL = `SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = cast(@provider AS String)
+  AND ((units, a_num) > (cast(@after_units AS Nullable(Int64)), cast(@after_a_num AS Nullable(String)))
+        OR (cast(@after_units AS Nullable(Int64)) IS NULL AND cast(@after_a_num AS Nullable(String)) IS NULL))
+ORDER BY units ASC, a_num ASC
+LIMIT cast(@limit AS UInt32);`
+
+func (q *DBQuerier) pageCDRsUnitsAsc(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	ctx = context.WithValue(ctx, "pggen_query_name", "PageCDRsUnitsAsc")
+	var items []CDRPageRow
+	if err := q.conn.Select(ctx, &items, pageCDRsUnitsAscSQL,
+		clickhouse.Named("provider", params.Provider),
+		clickhouse.Named("after_units", params.AfterUnits),
+		clickhouse.Named("after_a_num", params.AfterANum),
+		clickhouse.Named("limit", params.Limit),
+	); err != nil {
+		return nil, fmt.Errorf("query PageCDRsUnitsAsc: %w", err)
+	}
+	return items, nil
+}
+
+const (
+	PageCDRsSortStartDate = "start_date"
+	PageCDRsSortUnits     = "units"
+)
+
+type PageCDRsParams struct {
+	Provider   string     `json:"provider"`
+	AfterANum  *string    `json:"after_a_num"`
+	Limit      uint32     `json:"limit"`
+	AfterStart *time.Time `json:"after_start"`
+	AfterUnits *int64     `json:"after_units"`
+	SortKey    string     `json:"sort_key"`
+	Descending bool       `json:"descending"`
+}
+
+// PageCDRs dispatches to the keyset-pagination variant matching
+// params.SortKey and params.Descending.
+func (q *DBQuerier) PageCDRs(ctx context.Context, params PageCDRsParams) ([]CDRPageRow, error) {
+	switch {
+	case params.SortKey == "":
+		return q.pageCDRsDefault(ctx, params)
+	case params.SortKey == PageCDRsSortStartDate && params.Descending:
+		return q.pageCDRsStartDateDesc(ctx, params)
+	case params.SortKey == PageCDRsSortStartDate && !params.Descending:
+		return q.pageCDRsStartDateAsc(ctx, params)
+	case params.SortKey == PageCDRsSortUnits && params.Descending:
+		return q.pageCDRsUnitsDesc(ctx, params)
+	case params.SortKey == PageCDRsSortUnits && !params.Descending:
+		return q.pageCDRsUnitsAsc(ctx, params)
+	default:
+		return nil, fmt.Errorf("PageCDRs: unknown sort key %q", params.SortKey)
+	}
 }

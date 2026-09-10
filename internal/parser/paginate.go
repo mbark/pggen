@@ -80,7 +80,7 @@ func parseSortSpec(name string, lines []string) (*ast.SortSpec, error) {
 		case strings.HasPrefix(l, "default:"):
 			spec.DefaultBy = splitTerms(strings.TrimPrefix(l, "default:"))
 		case strings.HasPrefix(l, "cursor:"):
-			for _, pair := range splitList(strings.TrimPrefix(l, "cursor:")) {
+			for _, pair := range splitTerms(strings.TrimPrefix(l, "cursor:")) {
 				col, arg, ok := strings.Cut(pair, "=")
 				if !ok {
 					return nil, fmt.Errorf("sort spec %q: malformed cursor binding %q (want 'col=arg')", name, pair)
@@ -132,6 +132,37 @@ func validateNullable(specName string, key ast.SortKey) error {
 	return nil
 }
 
+// usesNativeParams reports whether this spec's cursor bindings are written in
+// the query dialect's own parameter syntax rather than as pggen.arg names.
+//
+// A ClickHouse binding is the parameter itself — {after_date:Nullable(DateTime)}
+// — because ClickHouse parameters carry their type, which pggen has no way to
+// invent. A Postgres binding is a bare pggen.arg name, whose type the server
+// infers. Nothing else distinguishes the two dialects here, and nothing needs
+// to: a query file is one dialect, and its bindings say which.
+func usesNativeParams(spec *ast.SortSpec) bool {
+	for _, binding := range spec.Cursor {
+		if strings.HasPrefix(binding, "{") {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeParamType is the declared type of a {name:Type} cursor binding.
+func nativeParamType(binding string) (string, bool) {
+	body, ok := strings.CutPrefix(binding, "{")
+	if !ok {
+		return "", false
+	}
+	body, ok = strings.CutSuffix(body, "}")
+	if !ok {
+		return "", false
+	}
+	_, typ, ok := strings.Cut(body, ":")
+	return strings.TrimSpace(typ), ok
+}
+
 func validateCursorBindings(spec *ast.SortSpec) error {
 	need := func(col string) error {
 		if _, ok := spec.Cursor[col]; !ok {
@@ -151,21 +182,32 @@ func validateCursorBindings(spec *ast.SortSpec) error {
 			return err
 		}
 	}
+	if !usesNativeParams(spec) {
+		return nil
+	}
+	// Every cursor argument is NULL on the first page — that is what the
+	// escape in the predicate tests for — so a parameter that cannot hold NULL
+	// makes the first page fail with "Cannot convert NULL to a non-nullable
+	// type" rather than return everything. Postgres infers the type and needs
+	// no such rule.
+	for col, binding := range spec.Cursor {
+		typ, ok := nativeParamType(binding)
+		if !ok {
+			return fmt.Errorf("sort spec %q: cursor binding %q for column %q is not a parameter; "+
+				"write it as {name:Type}", spec.Name, binding, col)
+		}
+		if !strings.HasPrefix(typ, "Nullable(") {
+			return fmt.Errorf("sort spec %q: cursor parameter %s for column %q must be Nullable: "+
+				"the first page is the one where every cursor argument is NULL, and a "+
+				"non-nullable parameter cannot carry that", spec.Name, binding, col)
+		}
+	}
 	return nil
 }
 
-func splitList(s string) []string {
-	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
 // splitTerms splits on top-level commas only, so expression terms like
-// COALESCE(a, b, c) survive as a single term.
+// COALESCE(a, b, c) survive as a single term, and so does a ClickHouse cursor
+// binding like {after_charge:Nullable(Decimal(18, 6))}.
 func splitTerms(s string) []string {
 	var out []string
 	depth := 0
@@ -177,9 +219,9 @@ func splitTerms(s string) []string {
 	}
 	for i, r := range s {
 		switch r {
-		case '(':
+		case '(', '{':
 			depth++
-		case ')':
+		case ')', '}':
 			if depth > 0 {
 				depth--
 			}
@@ -381,7 +423,17 @@ func keysetPredicate(spec *ast.SortSpec, columns, nullable []string, desc bool) 
 	if desc {
 		op = "<"
 	}
-	arg := func(col string) string { return "pggen.arg('" + spec.Cursor[col] + "')" }
+	arg := func(col string) string { return cursorRef(spec.Cursor[col]) }
+	// ClickHouse has IS NOT DISTINCT FROM, but only inside a JOIN ON clause;
+	// in a WHERE it fails with "can be used only in the JOIN ON section". The
+	// long form means the same thing and works in both dialects, but the short
+	// one reads better, so Postgres keeps it.
+	notDistinct := func(col string) string {
+		if !usesNativeParams(spec) {
+			return col + " IS NOT DISTINCT FROM " + arg(col)
+		}
+		return "((" + col + " IS NULL AND " + arg(col) + " IS NULL) OR " + col + " = " + arg(col) + ")"
+	}
 
 	rowComparison := func(cols []string) string {
 		if len(cols) == 1 {
@@ -408,7 +460,7 @@ func keysetPredicate(spec *ast.SortSpec, columns, nullable []string, desc bool) 
 		}
 		var sameLead string
 		if len(rest) > 0 {
-			sameLead = "(" + c1 + " IS NOT DISTINCT FROM " + arg(c1) + " AND " + rowComparison(rest) + ")"
+			sameLead = "(" + notDistinct(c1) + " AND " + rowComparison(rest) + ")"
 		}
 		earlier := "(" + c1 + " " + op + " " + arg(c1) + ")"
 		arms := []string{}
@@ -426,4 +478,14 @@ func keysetPredicate(spec *ast.SortSpec, columns, nullable []string, desc bool) 
 	escape := "(" + strings.Join(firstPage, " AND ") + ")"
 
 	return "(" + main + "\n        OR " + escape + ")"
+}
+
+// cursorRef renders a cursor binding as a reference the query's dialect
+// understands. A binding already written as a parameter — ClickHouse's
+// {name:Type} — is used as it stands; a bare name is a Postgres pggen.arg.
+func cursorRef(binding string) string {
+	if strings.HasPrefix(binding, "{") {
+		return binding
+	}
+	return "pggen.arg('" + binding + "')"
 }

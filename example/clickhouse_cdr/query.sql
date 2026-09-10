@@ -102,3 +102,26 @@ FROM {cdr_source:Identifier}
 WHERE start_date >= {from:DateTime}
 GROUP BY provider
 ORDER BY provider;
+
+-- A keyset-paginated search over the CDRs, fanned out by the paginate= pragma.
+--
+-- Each cursor argument is a Nullable parameter, because the first page is the
+-- one where every cursor argument is NULL: that is what the escape in the
+-- generated predicate tests for, and a non-nullable parameter could not carry
+-- it.
+-- sort: cdr_page
+--   key start_date: start_date, a_num
+--   key units: units, a_num
+--   default: a_num
+--   cursor: start_date={after_start:Nullable(DateTime)}, a_num={after_a_num:Nullable(String)}, units={after_units:Nullable(Int64)}
+
+-- name: PageCDRs :many output=CDRPageRow paginate=cdr_page
+SELECT
+    a_num,
+    units,
+    start_date
+FROM cdr
+WHERE provider = {provider:String}
+  AND pggen.keyset('cdr_page')
+ORDER BY pggen.orderby('cdr_page')
+LIMIT {limit:UInt32};

@@ -143,7 +143,9 @@ func (m chConnMethods) needsDriverPkg() bool { return m.Query || m.QueryRow }
 func chConnMethodsOf(files []TemplatedFile) chConnMethods {
 	var m chConnMethods
 	for _, file := range files {
-		for _, q := range file.Queries {
+		// A paginated query runs as its variants, so those are the ones whose
+		// method the connection has to have.
+		for _, q := range append(append([]TemplatedQuery{}, file.Queries...), file.Variants...) {
 			switch {
 			case q.ResultKind == ast.ResultKindExec:
 				m.Exec = true
@@ -194,16 +196,47 @@ func (tf TemplatedFile) EmitChGenericConn() string {
 // needsClickHouseImport reports whether a file references the clickhouse
 // package, which it does only to name parameters with clickhouse.Named.
 //
-// Variants are not consulted: rejectPaginate fails the whole run before
-// templating if a ClickHouse query has a variant group, so a ClickHouse file
-// never has any. Reading them here would suggest paginate= is half-supported.
+// A paginated query is emitted as its variants, so those count too — the
+// dispatcher itself names no parameters.
 func (tf TemplatedFile) needsClickHouseImport() bool {
-	for _, q := range tf.Queries {
+	for _, q := range append(append([]TemplatedQuery{}, tf.Queries...), tf.Variants...) {
 		if len(q.Inputs) > 0 {
 			return true
 		}
 	}
 	return false
+}
+
+// EmitChVariantParamNames emits a paginate variant's arguments, read from the
+// group's unified params struct.
+//
+// A variant is a private helper the dispatcher calls, so every variant takes
+// the same struct even though each uses a different subset of its fields —
+// which is what the cursor arguments of the sort key it was fanned out for
+// amount to.
+func (tq TemplatedQuery) EmitChVariantParamNames() string {
+	sb := &strings.Builder{}
+	for _, input := range tq.Inputs {
+		if tq.isIdentifier(input) {
+			continue
+		}
+		sb.WriteString(",\n\t\tclickhouse.Named(")
+		sb.WriteString(strconv.Quote(input.RawName.PgName))
+		sb.WriteString(", params.")
+		sb.WriteString(input.UpperName)
+		sb.WriteString(")")
+	}
+	if sb.Len() > 0 {
+		sb.WriteString(",\n\t")
+	}
+	return sb.String()
+}
+
+// EmitChVariantIdentifierPrelude is EmitChIdentifierPrelude for a paginate
+// variant, which always reads its parameters from the group's unified struct
+// however few of them it uses.
+func (tq TemplatedQuery) EmitChVariantIdentifierPrelude() (string, error) {
+	return tq.chIdentifierPrelude(true)
 }
 
 // isIdentifier reports whether input is an {…:Identifier} parameter.
@@ -248,6 +281,10 @@ func (tq TemplatedQuery) EmitChSQLRef() string {
 // decimal.Decimal. Leaving one Identifier for the server would silently break
 // every other parameter in the same query.
 func (tq TemplatedQuery) EmitChIdentifierPrelude() (string, error) {
+	return tq.chIdentifierPrelude(!tq.isInlineParams())
+}
+
+func (tq TemplatedQuery) chIdentifierPrelude(fromStruct bool) (string, error) {
 	idents := tq.chIdentifierInputs()
 	if len(idents) == 0 {
 		return "", nil
@@ -261,9 +298,9 @@ func (tq TemplatedQuery) EmitChIdentifierPrelude() (string, error) {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		value := "params." + input.UpperName
-		if tq.isInlineParams() {
-			value = input.LowerName
+		value := input.LowerName
+		if fromStruct {
+			value = "params." + input.UpperName
 		}
 		sb.WriteString(strconv.Quote(input.RawName.PgName))
 		sb.WriteString(": ")

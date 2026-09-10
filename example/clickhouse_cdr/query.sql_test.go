@@ -2,6 +2,7 @@ package clickhouse_cdr
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -274,5 +275,103 @@ func TestSumUnitsFrom_ReadsTheTableItIsGiven(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		assert.Equal(t, int64(10), got[0].Units)
+	})
+}
+
+// TestPageCDRs covers the paginate= pragma on ClickHouse.
+//
+// The pragma fans one query out into a statement per sort key and direction,
+// each with a clean ORDER BY and a matching cursor predicate, behind a
+// dispatcher. What has to hold is that the first page — every cursor argument
+// nil — returns the start of the ordering rather than nothing, that a cursor
+// taken from the last row of a page returns the next page and never repeats a
+// row, and that the two directions are mirror images.
+//
+// The nil first page is the part that would fail quietly: ClickHouse rejects
+// NULL for a non-nullable parameter, which is why a cursor binding must be
+// declared Nullable.
+func TestPageCDRs(t *testing.T) {
+	conn, _ := chtest.NewClickHouseDB(t, []string{"schema.sql"})
+	q := NewQuerier(conn)
+	ctx := context.Background()
+
+	start := time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC)
+	for i, units := range []int64{30, 10, 20} {
+		require.NoError(t, conn.Exec(ctx,
+			"INSERT INTO cdr (a_num, record_type, provider, units, charge, start_date, updated_at, subscription_id)"+
+				" VALUES (?, 'GPRS', 'telia', ?, 0, ?, ?, '11111111-1111-1111-1111-111111111111')",
+			fmt.Sprintf("4670000000%d", i), units,
+			start.Add(time.Duration(i)*time.Hour), start))
+	}
+
+	// A first page asks with no cursor at all, which is every cursor argument
+	// nil.
+	firstPage := func(t *testing.T, sortKey string, desc bool, limit uint32) []CDRPageRow {
+		t.Helper()
+		got, err := q.PageCDRs(ctx, PageCDRsParams{
+			Provider: "telia", Limit: limit,
+			SortKey: sortKey, Descending: desc,
+		})
+		require.NoError(t, err)
+		return got
+	}
+
+	t.Run("the default sort pages through every row", func(t *testing.T) {
+		page := firstPage(t, "", false, 2)
+		require.Len(t, page, 2)
+		assert.Equal(t, "46700000000", page[0].ANum)
+		assert.Equal(t, "46700000001", page[1].ANum)
+
+		next, err := q.PageCDRs(ctx, PageCDRsParams{
+			Provider: "telia", Limit: 2,
+			AfterANum: &page[1].ANum,
+		})
+		require.NoError(t, err)
+		require.Len(t, next, 1, "the last row, and none of the first page again")
+		assert.Equal(t, "46700000002", next[0].ANum)
+	})
+
+	t.Run("sorting by units ascending", func(t *testing.T) {
+		page := firstPage(t, PageCDRsSortUnits, false, 10)
+		require.Len(t, page, 3)
+		assert.Equal(t, []int64{10, 20, 30},
+			[]int64{page[0].Units, page[1].Units, page[2].Units})
+	})
+
+	t.Run("sorting by units descending is the mirror", func(t *testing.T) {
+		page := firstPage(t, PageCDRsSortUnits, true, 10)
+		require.Len(t, page, 3)
+		assert.Equal(t, []int64{30, 20, 10},
+			[]int64{page[0].Units, page[1].Units, page[2].Units})
+	})
+
+	t.Run("a cursor on the units sort takes the next page", func(t *testing.T) {
+		page := firstPage(t, PageCDRsSortUnits, false, 1)
+		require.Len(t, page, 1)
+		assert.Equal(t, int64(10), page[0].Units)
+
+		next, err := q.PageCDRs(ctx, PageCDRsParams{
+			Provider: "telia", Limit: 1,
+			SortKey:    PageCDRsSortUnits,
+			AfterUnits: &page[0].Units,
+			AfterANum:  &page[0].ANum,
+		})
+		require.NoError(t, err)
+		require.Len(t, next, 1)
+		assert.Equal(t, int64(20), next[0].Units)
+	})
+
+	t.Run("sorting by start_date descending", func(t *testing.T) {
+		page := firstPage(t, PageCDRsSortStartDate, true, 10)
+		require.Len(t, page, 3)
+		assert.Equal(t, start.Add(2*time.Hour), page[0].StartDate)
+		assert.Equal(t, start, page[2].StartDate)
+	})
+
+	t.Run("an unknown sort key is an error", func(t *testing.T) {
+		_, err := q.PageCDRs(ctx, PageCDRsParams{
+			Provider: "telia", Limit: 10, SortKey: "nope",
+		})
+		require.ErrorContains(t, err, "unknown sort key")
 	})
 }

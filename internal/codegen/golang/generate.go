@@ -38,9 +38,6 @@ func Generate(opts GenerateOptions, queryFiles []codegen.QueryFile) error {
 	var resolver TypeResolver = NewPgTypeResolver(caser, opts.TypeOverrides)
 	if opts.Dialect == codegen.DialectClickHouse {
 		resolver = NewChTypeResolver(caser, opts.TypeOverrides)
-		if err := rejectPaginate(queryFiles); err != nil {
-			return err
-		}
 	}
 	templater := NewTemplater(TemplaterOpts{
 		Caser:            caser,
@@ -93,20 +90,4 @@ func parseQueryTemplate(dialect codegen.Dialect) (*template.Template, error) {
 		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	return tmpl, nil
-}
-
-// rejectPaginate reports a clear error for the paginate= pragma, which the
-// ClickHouse backend does not generate dispatchers for yet.
-func rejectPaginate(queryFiles []codegen.QueryFile) error {
-	for _, file := range queryFiles {
-		for _, query := range file.Queries {
-			if query.VariantGroup != "" {
-				return fmt.Errorf(
-					"query %s in %s uses paginate=, which pggen does not support for ClickHouse yet; "+
-						"write the ORDER BY and keyset predicate out in SQL instead",
-					query.VariantGroup, file.SourcePath)
-			}
-		}
-	}
-	return nil
 }

@@ -178,8 +178,29 @@ Three things differ from the Postgres output, all because ClickHouse does:
   `decimal.Decimal`. One identifier left for the server would quietly break
   every other parameter beside it. `example/clickhouse_cdr` covers both halves.
 
-`chgen` generates for `:one`, `:many` and `:exec`. The `paginate=` pragma is not
-supported yet, and `PrepareBatch` row-buffered inserts are still hand-written.
+`chgen` generates for `:one`, `:many` and `:exec`, including the `paginate=`
+pragma. `PrepareBatch` row-buffered inserts are still hand-written.
+
+A ClickHouse sort spec writes its cursor bindings as the parameters themselves,
+because a ClickHouse parameter carries its type and pggen has no way to invent
+one:
+
+```sql
+-- sort: cdr_page
+--   key start_date: start_date, a_num
+--   default: a_num
+--   cursor: start_date={after_start:Nullable(DateTime)}, a_num={after_a_num:Nullable(String)}
+```
+
+Every cursor parameter must be `Nullable`, and `chgen` refuses a spec where one
+is not. The first page is the page where every cursor argument is NULL — that is
+what the escape in the generated predicate tests for — and a non-nullable
+parameter cannot carry it. Postgres needs no such rule, because the server
+infers the type.
+
+One thing the generated predicate spells differently: ClickHouse has
+`IS NOT DISTINCT FROM`, but only inside a `JOIN ON` clause, so a nullable
+leading sort column gets the long form, `(a IS NULL AND b IS NULL) OR a = b`.
 
 An `:exec` query is checked less thoroughly than the rest. ClickHouse will only
 analyse a query it can run as a `SELECT` — `DESCRIBE` and `EXPLAIN QUERY TREE`

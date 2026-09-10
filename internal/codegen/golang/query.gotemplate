@@ -196,9 +196,9 @@ func (q *DBQuerier) {{ $q.VariantMethodName }}(ctx context.Context, params {{ $q
 {{- end -}}
 
 {{- range $pg := .PaginateGroups -}}
-{{ $pg.EmitSortKeyConsts }}
-{{ $pg.EmitParamStruct }}
-{{ $pg.EmitDispatcher }}
+{{- $pg.EmitSortKeyConsts -}}
+{{- $pg.EmitParamStruct -}}
+{{- $pg.EmitDispatcher -}}
 {{- end -}}
 {{- "\n" -}}
 {{- end -}}

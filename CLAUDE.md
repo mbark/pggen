@@ -16,8 +16,9 @@ see README "Features" and `internal/parser/paginate.go`.
 
 It also ships **`chgen`**, the same tool pointed at ClickHouse: same query file format,
 same pragmas, a different database and driver. The two are separate binaries so each
-keeps its own flags and neither grows a dialect switch. `paginate=` is rejected for
-ClickHouse for now.
+keeps its own flags and neither grows a dialect switch. `paginate=` works for both, with the
+cursor bindings of a ClickHouse sort spec written as `{name:Nullable(Type)}`
+parameters rather than pggen.arg names.
 
 ## Commands
 
