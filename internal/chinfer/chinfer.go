@@ -207,7 +207,7 @@ func (inf *Inferrer) checkInsertTarget(ctx context.Context, sql string) error {
 		return nil
 	}
 
-	existing, err := inf.describeTable(ctx, target.Table)
+	existing, err := inf.describeTable(ctx, target.SQLName)
 	if err != nil {
 		return err
 	}

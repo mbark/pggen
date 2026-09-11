@@ -6,8 +6,18 @@ import "strings"
 // it lists, if it lists any.
 type InsertTarget struct {
 	// Table as the query spells it, qualified or not, with any quoting
-	// removed: `source`.`raw` and source.raw both give "source.raw".
+	// removed: `source`.`raw` and source.raw both give "source.raw". This is
+	// the name to show in an error; to name the table in another statement,
+	// use SQLName.
 	Table string
+	// SQLName is the table exactly as the query spells it, quoting and all.
+	//
+	// Unquoting loses which dots separated identifiers and which were inside
+	// one: `source.raw` is a single table whose name holds a dot, and Table
+	// gives it as source.raw, the same as the qualified `source`.`raw`. So a
+	// statement that names the table back to ClickHouse spells it the way the
+	// query did rather than the way Table reads.
+	SQLName string
 	// Columns names in the order the query lists them. Empty for an INSERT
 	// that gives no column list, which is legal and means every column.
 	Columns []string
@@ -55,19 +65,21 @@ func ScanInsertTarget(sql string) (InsertTarget, bool) {
 	if table == "" {
 		return InsertTarget{}, false
 	}
+	target := InsertTarget{Table: table, SQLName: sql[i:afterTable]}
 	i = skipSpaceAndComments(sql, afterTable)
 
 	// No column list is legal and means every column, in order. There is
 	// nothing to check against the table, but the table itself still is.
 	if i >= len(sql) || sql[i] != '(' {
-		return InsertTarget{Table: table}, true
+		return target, true
 	}
 
 	columns, ok := readColumnList(sql, i)
 	if !ok {
 		return InsertTarget{}, false
 	}
-	return InsertTarget{Table: table, Columns: columns}, true
+	target.Columns = columns
+	return target, true
 }
 
 // readColumnList reads the parenthesised column list starting at the '(' at i.
@@ -130,8 +142,12 @@ func readIdent(sql string, i int) (string, int) {
 }
 
 // unescapeQuoted strips the quotes from a quoted identifier and undoes the
-// backslash escapes inside it.
+// backslash escapes inside it. An identifier whose quote is never closed runs
+// to the end of the statement and is not one, so it gives "".
 func unescapeQuoted(quoted string) string {
+	if len(quoted) < 2 || quoted[len(quoted)-1] != quoted[0] {
+		return ""
+	}
 	inner := quoted[1 : len(quoted)-1]
 	if !strings.Contains(inner, "\\") {
 		return inner
