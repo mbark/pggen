@@ -552,7 +552,6 @@ func unwrapPointer(t gotype.Type) gotype.Type {
 	return t
 }
 
-// removeImport returns imports without pkgPath, preserving order.
 // addImport inserts pkgPath in path order, or leaves imports alone if it is
 // already there.
 func addImport(imports []ImportPkg, pkgPath string) []ImportPkg {
@@ -571,6 +570,7 @@ func addImport(imports []ImportPkg, pkgPath string) []ImportPkg {
 	return imports
 }
 
+// removeImport returns imports without pkgPath, preserving order.
 func removeImport(imports []ImportPkg, pkgPath string) []ImportPkg {
 	for i, imp := range imports {
 		if imp.PkgPath == pkgPath {
@@ -581,18 +581,44 @@ func removeImport(imports []ImportPkg, pkgPath string) []ImportPkg {
 	return imports
 }
 
-// validateSQLConstNames rejects two queries whose sql=<Name> pragmas name the
-// same constant.
+// validateSQLConstNames rejects a sql=<Name> pragma that names something the
+// generated package declares already — another query's constant, or a struct.
 //
-// Every generated file is in one package, so two files naming the same constant
-// would emit a redeclaration — a compile error in the generated code, which is
-// the one place an error is expensive to read. The pragma is explicit, so this
-// can only be a mistake.
+// Every generated file is in one package, so a repeated name emits a
+// redeclaration: a compile error in the generated code, which is the one place
+// an error is expensive to read. The pragma is explicit, so this can only be a
+// mistake.
+//
+// The struct names are reserved whether or not the query in fact declares them
+// — a query with inlined parameters emits no Params struct — because a name
+// that reads as another query's is a mistake either way, and a rule that
+// depended on the parameter count would be one to explain rather than one to
+// follow.
 func validateSQLConstNames(files []TemplatedFile) error {
+	type decl struct{ file, what string }
+	declared := make(map[string]decl)
+	reserve := func(name string, d decl) {
+		if name == "" {
+			return
+		}
+		if _, ok := declared[name]; !ok {
+			declared[name] = d
+		}
+	}
+	for _, f := range files {
+		for _, q := range allQueries(f) {
+			reserve(q.rowTypeName(), decl{f.SourcePath, "the row struct of " + q.Name})
+			reserve(q.Name+"Params", decl{f.SourcePath, "the params struct of " + q.Name})
+			if q.IsVariant() {
+				reserve(q.VariantParamsType(), decl{f.SourcePath, "the params struct of " + q.VariantGroup})
+			}
+		}
+	}
+
 	type owner struct{ file, query string }
 	byName := make(map[string]owner)
 	for _, f := range files {
-		for _, q := range append(append([]TemplatedQuery{}, f.Queries...), f.Variants...) {
+		for _, q := range allQueries(f) {
 			if q.SQLConst == "" {
 				continue
 			}
@@ -601,17 +627,28 @@ func validateSQLConstNames(files []TemplatedFile) error {
 					"a SQL constant name must be unique in the generated package",
 					q.SQLConst, prev.query, prev.file, q.Name, f.SourcePath)
 			}
+			if prev, ok := declared[q.SQLConst]; ok {
+				return fmt.Errorf("query %s in %s declares sql=%s, which is also %s in %s; "+
+					"a SQL constant name must be unique in the generated package",
+					q.Name, f.SourcePath, q.SQLConst, prev.what, prev.file)
+			}
 			byName[q.SQLConst] = owner{file: f.SourcePath, query: q.Name}
 		}
 	}
 	return nil
 }
 
+// allQueries are a file's queries together with the variants its paginated
+// queries fan out into, which declare package-level names of their own.
+func allQueries(f TemplatedFile) []TemplatedQuery {
+	return append(append([]TemplatedQuery{}, f.Queries...), f.Variants...)
+}
+
 // hasChIdentifiers reports whether any query in the package takes an
 // {…:Identifier} parameter.
 func hasChIdentifiers(files []TemplatedFile) bool {
 	for _, f := range files {
-		for _, q := range append(append([]TemplatedQuery{}, f.Queries...), f.Variants...) {
+		for _, q := range allQueries(f) {
 			if q.EmitChHasIdentifiers() {
 				return true
 			}

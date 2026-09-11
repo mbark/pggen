@@ -597,9 +597,10 @@ Examples embedded in the repo:
     materializes one into a temporary table.
 
     The name must be an exported Go identifier and unique in the generated
-    package. `sql=` cannot be combined with `paginate=`: a paginated query is
-    fanned out into one statement per sort key, so there is no single SQL for a
-    constant to hold.
+    package — including against the structs pggen names after a query, so
+    `sql=FindItemsRow` is refused. `sql=` cannot be combined with `paginate=`: a
+    paginated query is fanned out into one statement per sort key, so there is
+    no single SQL for a constant to hold.
 
 -   **Keyset / ordering pagination**: a list query that supports runtime-chosen
     sorting normally needs a `CASE WHEN $flag THEN col END` block in both the
