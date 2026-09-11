@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/mbark/pggen/internal/ast"
+	"github.com/mbark/pggen/internal/ch"
+	"github.com/mbark/pggen/internal/codegen"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -107,4 +109,50 @@ func TestEmitChGenericConn_spansThePackage(t *testing.T) {
 	assert.Contains(t, got, "Select(ctx context.Context")
 	assert.Contains(t, got, "Exec(ctx context.Context",
 		"the other file's :exec query still needs Exec on the shared conn")
+}
+
+// TestNeedsClickHouseImport covers which queries make a file reference the
+// clickhouse package. An import it does not use is a compile error in the
+// generated code, and an Identifier parameter is not bound through
+// clickhouse.Named — it is substituted into the SQL text.
+func TestNeedsClickHouseImport(t *testing.T) {
+	bound := TemplatedParam{RawName: codegen.InputParam{PgName: "from", Type: ch.Scalar{Name: "DateTime"}}}
+	identifier := TemplatedParam{RawName: codegen.InputParam{PgName: "tbl", Type: ch.Scalar{Name: "Identifier"}}}
+
+	tests := []struct {
+		name string
+		file TemplatedFile
+		want bool
+	}{
+		{
+			name: "no parameters at all",
+			file: TemplatedFile{Queries: []TemplatedQuery{{}}},
+			want: false,
+		},
+		{
+			name: "a bound parameter is named",
+			file: TemplatedFile{Queries: []TemplatedQuery{{Inputs: []TemplatedParam{bound}}}},
+			want: true,
+		},
+		{
+			name: "an Identifier alone is substituted, not named",
+			file: TemplatedFile{Queries: []TemplatedQuery{{Inputs: []TemplatedParam{identifier}}}},
+			want: false,
+		},
+		{
+			name: "an Identifier beside a bound parameter",
+			file: TemplatedFile{Queries: []TemplatedQuery{{Inputs: []TemplatedParam{identifier, bound}}}},
+			want: true,
+		},
+		{
+			name: "a paginate variant counts, since it is what runs",
+			file: TemplatedFile{Variants: []TemplatedQuery{{Inputs: []TemplatedParam{bound}}}},
+			want: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.file.needsClickHouseImport())
+		})
+	}
 }

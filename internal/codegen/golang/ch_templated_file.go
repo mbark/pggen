@@ -145,7 +145,7 @@ func chConnMethodsOf(files []TemplatedFile) chConnMethods {
 	for _, file := range files {
 		// A paginated query runs as its variants, so those are the ones whose
 		// method the connection has to have.
-		for _, q := range append(append([]TemplatedQuery{}, file.Queries...), file.Variants...) {
+		for _, q := range allQueries(file) {
 			switch {
 			case q.ResultKind == ast.ResultKindExec:
 				m.Exec = true
@@ -196,12 +196,16 @@ func (tf TemplatedFile) EmitChGenericConn() string {
 // needsClickHouseImport reports whether a file references the clickhouse
 // package, which it does only to name parameters with clickhouse.Named.
 //
-// A paginated query is emitted as its variants, so those count too — the
+// An Identifier parameter is not named, it is substituted into the SQL text, so
+// a query whose every parameter is one references nothing from the package. A
+// paginated query is emitted as its variants, so those count too — the
 // dispatcher itself names no parameters.
 func (tf TemplatedFile) needsClickHouseImport() bool {
-	for _, q := range append(append([]TemplatedQuery{}, tf.Queries...), tf.Variants...) {
-		if len(q.Inputs) > 0 {
-			return true
+	for _, q := range allQueries(tf) {
+		for _, input := range q.Inputs {
+			if !q.isIdentifier(input) {
+				return true
+			}
 		}
 	}
 	return false
