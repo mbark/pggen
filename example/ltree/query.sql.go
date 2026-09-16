@@ -229,6 +229,7 @@ type FindLtreeInputRow struct {
 // FindLtreeInput implements Querier.FindLtreeInput.
 func (q *DBQuerier) FindLtreeInput(ctx context.Context, inLtree pgtype.Text, inLtreeArray []string) (FindLtreeInputRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindLtreeInput")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"in_ltree", "in_ltree_array"})
 	row := q.conn.QueryRow(ctx, findLtreeInputSQL, inLtree, inLtreeArray)
 	var item FindLtreeInputRow
 	if err := row.Scan(&item.Ltree, &item.TextArr); err != nil {

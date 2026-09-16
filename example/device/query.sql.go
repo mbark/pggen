@@ -147,6 +147,7 @@ type FindDevicesByUserRow struct {
 // FindDevicesByUser implements Querier.FindDevicesByUser.
 func (q *DBQuerier) FindDevicesByUser(ctx context.Context, id int) ([]FindDevicesByUserRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindDevicesByUser")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"ID"})
 	rows, err := q.conn.Query(ctx, findDevicesByUserSQL, id)
 	if err != nil {
 		return nil, fmt.Errorf("query FindDevicesByUser: %w", err)
@@ -370,6 +371,7 @@ VALUES ($1, $2);`
 // InsertUser implements Querier.InsertUser.
 func (q *DBQuerier) InsertUser(ctx context.Context, userID int, name string) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertUser")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"user_id", "name"})
 	cmdTag, err := q.conn.Exec(ctx, insertUserSQL, userID, name)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query InsertUser: %w", err)
@@ -397,6 +399,7 @@ VALUES ($1, $2);`
 // InsertDevice implements Querier.InsertDevice.
 func (q *DBQuerier) InsertDevice(ctx context.Context, mac net.HardwareAddr, owner int) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertDevice")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"mac", "owner"})
 	cmdTag, err := q.conn.Exec(ctx, insertDeviceSQL, mac, owner)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query InsertDevice: %w", err)

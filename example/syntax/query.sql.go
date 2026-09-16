@@ -292,6 +292,7 @@ type IllegalNameSymbolsRow struct {
 // IllegalNameSymbols implements Querier.IllegalNameSymbols.
 func (q *DBQuerier) IllegalNameSymbols(ctx context.Context, helloWorld string) (IllegalNameSymbolsRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "IllegalNameSymbols")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"@hello world!"})
 	row := q.conn.QueryRow(ctx, illegalNameSymbolsSQL, helloWorld)
 	var item IllegalNameSymbolsRow
 	if err := row.Scan(&item.UnnamedColumn0, &item.FooBar); err != nil {
@@ -320,6 +321,7 @@ const spaceAfterSQL = `SELECT $1;`
 // SpaceAfter implements Querier.SpaceAfter.
 func (q *DBQuerier) SpaceAfter(ctx context.Context, space string) (string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "SpaceAfter")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"space"})
 	row := q.conn.QueryRow(ctx, spaceAfterSQL, space)
 	var item string
 	if err := row.Scan(&item); err != nil {
@@ -376,6 +378,7 @@ const goKeywordSQL = `SELECT $1::text;`
 // GoKeyword implements Querier.GoKeyword.
 func (q *DBQuerier) GoKeyword(ctx context.Context, go_ string) (string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "GoKeyword")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"go"})
 	row := q.conn.QueryRow(ctx, goKeywordSQL, go_)
 	var item string
 	if err := row.Scan(&item); err != nil {

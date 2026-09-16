@@ -95,6 +95,7 @@ const getBoolsSQL = `SELECT $1::boolean[];`
 // GetBools implements Querier.GetBools.
 func (q *DBQuerier) GetBools(ctx context.Context, data []bool) ([]bool, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "GetBools")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"data"})
 	row := q.conn.QueryRow(ctx, getBoolsSQL, data)
 	item := []bool{}
 	if err := row.Scan(&item); err != nil {
@@ -123,6 +124,7 @@ const getOneTimestampSQL = `SELECT $1::timestamp;`
 // GetOneTimestamp implements Querier.GetOneTimestamp.
 func (q *DBQuerier) GetOneTimestamp(ctx context.Context, data *time.Time) (*time.Time, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "GetOneTimestamp")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"data"})
 	row := q.conn.QueryRow(ctx, getOneTimestampSQL, data)
 	var item *time.Time
 	if err := row.Scan(&item); err != nil {
@@ -152,6 +154,7 @@ FROM unnest($1::timestamptz[]);`
 // GetManyTimestamptzs implements Querier.GetManyTimestamptzs.
 func (q *DBQuerier) GetManyTimestamptzs(ctx context.Context, data []time.Time) ([]*time.Time, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "GetManyTimestamptzs")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"data"})
 	rows, err := q.conn.Query(ctx, getManyTimestamptzsSQL, data)
 	if err != nil {
 		return nil, fmt.Errorf("query GetManyTimestamptzs: %w", err)
@@ -203,6 +206,7 @@ FROM unnest($1::timestamp[]);`
 // GetManyTimestamps implements Querier.GetManyTimestamps.
 func (q *DBQuerier) GetManyTimestamps(ctx context.Context, data []*time.Time) ([]*time.Time, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "GetManyTimestamps")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"data"})
 	rows, err := q.conn.Query(ctx, getManyTimestampsSQL, data)
 	if err != nil {
 		return nil, fmt.Errorf("query GetManyTimestamps: %w", err)

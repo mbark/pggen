@@ -147,6 +147,7 @@ type SearchScreenshotsRow struct {
 // SearchScreenshots implements Querier.SearchScreenshots.
 func (q *DBQuerier) SearchScreenshots(ctx context.Context, params SearchScreenshotsParams) ([]SearchScreenshotsRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "SearchScreenshots")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"Body", "Limit", "Offset"})
 	rows, err := q.conn.Query(ctx, searchScreenshotsSQL, params.Body, params.Limit, params.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("query SearchScreenshots: %w", err)
@@ -210,6 +211,7 @@ type SearchScreenshotsOneColParams struct {
 // SearchScreenshotsOneCol implements Querier.SearchScreenshotsOneCol.
 func (q *DBQuerier) SearchScreenshotsOneCol(ctx context.Context, params SearchScreenshotsOneColParams) ([][]Blocks, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "SearchScreenshotsOneCol")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"Body", "Limit", "Offset"})
 	rows, err := q.conn.Query(ctx, searchScreenshotsOneColSQL, params.Body, params.Limit, params.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("query SearchScreenshotsOneCol: %w", err)
@@ -273,6 +275,7 @@ type InsertScreenshotBlocksRow struct {
 // InsertScreenshotBlocks implements Querier.InsertScreenshotBlocks.
 func (q *DBQuerier) InsertScreenshotBlocks(ctx context.Context, screenshotID int, body string) (InsertScreenshotBlocksRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertScreenshotBlocks")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"ScreenshotID", "Body"})
 	row := q.conn.QueryRow(ctx, insertScreenshotBlocksSQL, screenshotID, body)
 	var item InsertScreenshotBlocksRow
 	if err := row.Scan(&item.ID, &item.ScreenshotID, &item.Body); err != nil {
@@ -301,6 +304,7 @@ const arraysInputSQL = `SELECT $1::arrays;`
 // ArraysInput implements Querier.ArraysInput.
 func (q *DBQuerier) ArraysInput(ctx context.Context, arrays Arrays) (Arrays, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ArraysInput")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"arrays"})
 	row := q.conn.QueryRow(ctx, arraysInputSQL, arrays)
 	var item Arrays
 	if err := row.Scan(&item); err != nil {

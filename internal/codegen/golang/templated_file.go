@@ -375,6 +375,24 @@ func (tq TemplatedQuery) EmitParamStruct() string {
 	return sb.String()
 }
 
+// EmitArgNamesContext emits a statement that stores the pggen.arg names of the
+// inputs on the context, in the order the query passes them as $1, $2, ...
+func (tq TemplatedQuery) EmitArgNamesContext() string {
+	if len(tq.Inputs) == 0 {
+		return ""
+	}
+	sb := &strings.Builder{}
+	sb.WriteString("\n\tctx = context.WithValue(ctx, \"pggen_query_args\", []string{")
+	for i, input := range tq.Inputs {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(strconv.Quote(input.RawName.PgName))
+	}
+	sb.WriteString("})")
+	return sb.String()
+}
+
 // EmitParamNames emits the TemplatedQuery.Inputs into comma separated names
 // for use in a method invocation.
 func (tq TemplatedQuery) EmitParamNames() string {

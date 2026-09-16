@@ -122,6 +122,7 @@ const paramArrayIntSQL = `SELECT $1::bigint[];`
 // ParamArrayInt implements Querier.ParamArrayInt.
 func (q *DBQuerier) ParamArrayInt(ctx context.Context, ints []int) ([]int, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ParamArrayInt")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"ints"})
 	row := q.conn.QueryRow(ctx, paramArrayIntSQL, ints)
 	item := []int{}
 	if err := row.Scan(&item); err != nil {
@@ -150,6 +151,7 @@ const paramNested1SQL = `SELECT $1::dimensions;`
 // ParamNested1 implements Querier.ParamNested1.
 func (q *DBQuerier) ParamNested1(ctx context.Context, dimensions Dimensions) (Dimensions, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ParamNested1")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"dimensions"})
 	row := q.conn.QueryRow(ctx, paramNested1SQL, dimensions)
 	var item Dimensions
 	if err := row.Scan(&item); err != nil {
@@ -178,6 +180,7 @@ const paramNested2SQL = `SELECT $1::product_image_type;`
 // ParamNested2 implements Querier.ParamNested2.
 func (q *DBQuerier) ParamNested2(ctx context.Context, image ProductImageType) (ProductImageType, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ParamNested2")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"image"})
 	row := q.conn.QueryRow(ctx, paramNested2SQL, image)
 	var item ProductImageType
 	if err := row.Scan(&item); err != nil {
@@ -206,6 +209,7 @@ const paramNested2ArraySQL = `SELECT $1::product_image_type[];`
 // ParamNested2Array implements Querier.ParamNested2Array.
 func (q *DBQuerier) ParamNested2Array(ctx context.Context, images []ProductImageType) ([]ProductImageType, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ParamNested2Array")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"images"})
 	row := q.conn.QueryRow(ctx, paramNested2ArraySQL, images)
 	item := []ProductImageType{}
 	if err := row.Scan(&item); err != nil {
@@ -234,6 +238,7 @@ const paramNested3SQL = `SELECT $1::product_image_set_type;`
 // ParamNested3 implements Querier.ParamNested3.
 func (q *DBQuerier) ParamNested3(ctx context.Context, imageSet ProductImageSetType) (ProductImageSetType, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ParamNested3")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"image_set"})
 	row := q.conn.QueryRow(ctx, paramNested3SQL, imageSet)
 	var item ProductImageSetType
 	if err := row.Scan(&item); err != nil {

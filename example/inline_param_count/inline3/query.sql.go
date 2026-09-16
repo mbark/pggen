@@ -115,6 +115,7 @@ type FindAuthorByIDRow struct {
 // FindAuthorByID implements Querier.FindAuthorByID.
 func (q *DBQuerier) FindAuthorByID(ctx context.Context, authorID int32) (FindAuthorByIDRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindAuthorByID")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"AuthorID"})
 	row := q.conn.QueryRow(ctx, findAuthorByIDSQL, authorID)
 	var item FindAuthorByIDRow
 	if err := row.Scan(&item.AuthorID, &item.FirstName, &item.LastName, &item.Suffix); err != nil {
@@ -145,6 +146,7 @@ RETURNING author_id;`
 // InsertAuthor implements Querier.InsertAuthor.
 func (q *DBQuerier) InsertAuthor(ctx context.Context, firstName string, lastName string) (int32, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertAuthor")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName", "LastName"})
 	row := q.conn.QueryRow(ctx, insertAuthorSQL, firstName, lastName)
 	var item int32
 	if err := row.Scan(&item); err != nil {
@@ -177,6 +179,7 @@ WHERE first_name = $1
 // DeleteAuthorsByFullName implements Querier.DeleteAuthorsByFullName.
 func (q *DBQuerier) DeleteAuthorsByFullName(ctx context.Context, firstName string, lastName string, suffix string) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "DeleteAuthorsByFullName")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName", "LastName", "Suffix"})
 	cmdTag, err := q.conn.Exec(ctx, deleteAuthorsByFullNameSQL, firstName, lastName, suffix)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query DeleteAuthorsByFullName: %w", err)

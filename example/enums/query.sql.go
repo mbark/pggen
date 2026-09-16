@@ -190,6 +190,7 @@ VALUES ($1, $2);`
 // InsertDevice implements Querier.InsertDevice.
 func (q *DBQuerier) InsertDevice(ctx context.Context, mac net.HardwareAddr, typePg DeviceType) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertDevice")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"Mac", "TypePg"})
 	cmdTag, err := q.conn.Exec(ctx, insertDeviceSQL, mac, typePg)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query InsertDevice: %w", err)

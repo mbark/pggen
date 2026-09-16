@@ -79,6 +79,7 @@ type FindByIDRow struct {
 // FindByID implements Querier.FindByID.
 func (q *DBQuerier) FindByID(ctx context.Context, id pgtype.UUID) (FindByIDRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindByID")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"id"})
 	row := q.conn.QueryRow(ctx, findByIDSQL, id)
 	var item FindByIDRow
 	if err := row.Scan(&item.ID, &item.Data, &item.Metadata, &item.CreatedAt); err != nil {
@@ -116,6 +117,7 @@ type CreateRow struct {
 // Create implements Querier.Create.
 func (q *DBQuerier) Create(ctx context.Context, data []byte, metadata []byte) (CreateRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "Create")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"data", "metadata"})
 	row := q.conn.QueryRow(ctx, createSQL, data, metadata)
 	var item CreateRow
 	if err := row.Scan(&item.ID, &item.Data, &item.Metadata, &item.CreatedAt); err != nil {

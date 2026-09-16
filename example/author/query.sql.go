@@ -162,6 +162,7 @@ type FindAuthorByIDRow struct {
 // FindAuthorByID implements Querier.FindAuthorByID.
 func (q *DBQuerier) FindAuthorByID(ctx context.Context, authorID int32) (FindAuthorByIDRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindAuthorByID")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"AuthorID"})
 	row := q.conn.QueryRow(ctx, FindAuthorByIDSQL, authorID)
 	var item FindAuthorByIDRow
 	if err := row.Scan(&item.AuthorID, &item.FirstName, &item.LastName, &item.Suffix); err != nil {
@@ -197,6 +198,7 @@ type FindAuthorsRow struct {
 // FindAuthors implements Querier.FindAuthors.
 func (q *DBQuerier) FindAuthors(ctx context.Context, firstName string) ([]FindAuthorsRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindAuthors")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName"})
 	rows, err := q.conn.Query(ctx, findAuthorsSQL, firstName)
 	if err != nil {
 		return nil, fmt.Errorf("query FindAuthors: %w", err)
@@ -252,6 +254,7 @@ type FindAuthorNamesRow struct {
 // FindAuthorNames implements Querier.FindAuthorNames.
 func (q *DBQuerier) FindAuthorNames(ctx context.Context, authorID int32) ([]FindAuthorNamesRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindAuthorNames")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"AuthorID"})
 	rows, err := q.conn.Query(ctx, findAuthorNamesSQL, authorID)
 	if err != nil {
 		return nil, fmt.Errorf("query FindAuthorNames: %w", err)
@@ -302,6 +305,7 @@ const findFirstNamesSQL = `SELECT first_name FROM author ORDER BY author_id = $1
 // FindFirstNames implements Querier.FindFirstNames.
 func (q *DBQuerier) FindFirstNames(ctx context.Context, authorID int32) ([]*string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "FindFirstNames")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"AuthorID"})
 	rows, err := q.conn.Query(ctx, findFirstNamesSQL, authorID)
 	if err != nil {
 		return nil, fmt.Errorf("query FindFirstNames: %w", err)
@@ -378,6 +382,7 @@ const deleteAuthorsByFirstNameSQL = `DELETE FROM author WHERE first_name = $1;`
 // DeleteAuthorsByFirstName implements Querier.DeleteAuthorsByFirstName.
 func (q *DBQuerier) DeleteAuthorsByFirstName(ctx context.Context, firstName string) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "DeleteAuthorsByFirstName")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName"})
 	cmdTag, err := q.conn.Exec(ctx, deleteAuthorsByFirstNameSQL, firstName)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query DeleteAuthorsByFirstName: %w", err)
@@ -414,6 +419,7 @@ type DeleteAuthorsByFullNameParams struct {
 // DeleteAuthorsByFullName implements Querier.DeleteAuthorsByFullName.
 func (q *DBQuerier) DeleteAuthorsByFullName(ctx context.Context, params DeleteAuthorsByFullNameParams) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "DeleteAuthorsByFullName")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName", "LastName", "Suffix"})
 	cmdTag, err := q.conn.Exec(ctx, deleteAuthorsByFullNameSQL, params.FirstName, params.LastName, params.Suffix)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query DeleteAuthorsByFullName: %w", err)
@@ -442,6 +448,7 @@ RETURNING author_id;`
 // InsertAuthor implements Querier.InsertAuthor.
 func (q *DBQuerier) InsertAuthor(ctx context.Context, firstName string, lastName string) (int32, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertAuthor")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName", "LastName"})
 	row := q.conn.QueryRow(ctx, insertAuthorSQL, firstName, lastName)
 	var item int32
 	if err := row.Scan(&item); err != nil {
@@ -485,6 +492,7 @@ type InsertAuthorSuffixRow struct {
 // InsertAuthorSuffix implements Querier.InsertAuthorSuffix.
 func (q *DBQuerier) InsertAuthorSuffix(ctx context.Context, params InsertAuthorSuffixParams) (InsertAuthorSuffixRow, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "InsertAuthorSuffix")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"FirstName", "LastName", "Suffix"})
 	row := q.conn.QueryRow(ctx, insertAuthorSuffixSQL, params.FirstName, params.LastName, params.Suffix)
 	var item InsertAuthorSuffixRow
 	if err := row.Scan(&item.AuthorID, &item.FirstName, &item.LastName, &item.Suffix); err != nil {
@@ -513,6 +521,7 @@ const stringAggFirstNameSQL = `SELECT string_agg(first_name, ',') AS names FROM 
 // StringAggFirstName implements Querier.StringAggFirstName.
 func (q *DBQuerier) StringAggFirstName(ctx context.Context, authorID int32) (*string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "StringAggFirstName")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"author_id"})
 	row := q.conn.QueryRow(ctx, stringAggFirstNameSQL, authorID)
 	var item *string
 	if err := row.Scan(&item); err != nil {
@@ -541,6 +550,7 @@ const arrayAggFirstNameSQL = `SELECT array_agg(first_name) AS names FROM author 
 // ArrayAggFirstName implements Querier.ArrayAggFirstName.
 func (q *DBQuerier) ArrayAggFirstName(ctx context.Context, authorID int32) ([]string, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "ArrayAggFirstName")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"author_id"})
 	row := q.conn.QueryRow(ctx, arrayAggFirstNameSQL, authorID)
 	item := []string{}
 	if err := row.Scan(&item); err != nil {

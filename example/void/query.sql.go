@@ -109,6 +109,7 @@ const voidOnlyTwoParamsSQL = `SELECT void_fn_two_params($1, 'text');`
 // VoidOnlyTwoParams implements Querier.VoidOnlyTwoParams.
 func (q *DBQuerier) VoidOnlyTwoParams(ctx context.Context, id int32) (pgconn.CommandTag, error) {
 	ctx = context.WithValue(ctx, "pggen_query_name", "VoidOnlyTwoParams")
+	ctx = context.WithValue(ctx, "pggen_query_args", []string{"id"})
 	cmdTag, err := q.conn.Exec(ctx, voidOnlyTwoParamsSQL, id)
 	if err != nil {
 		return cmdTag, fmt.Errorf("exec query VoidOnlyTwoParams: %w", err)
