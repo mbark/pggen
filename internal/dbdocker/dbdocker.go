@@ -16,16 +16,16 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"time"
 
-	"github.com/docker/docker/api/types/build"
-	"github.com/docker/docker/api/types/container"
-	dockerClient "github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	dockerClient "github.com/moby/moby/client"
 
 	"github.com/mbark/pggen/internal/errs"
 	"github.com/mbark/pggen/internal/ports"
@@ -47,7 +47,7 @@ type Config struct {
 	// Cmd overrides the image command, if set.
 	Cmd []string
 	// Port the database listens on inside the container, like "5432/tcp".
-	Port nat.Port
+	Port string
 	// Tmpfs mounts, used to keep the data directory off disk.
 	Tmpfs map[string]string
 	// WaitReady blocks until the database accepts connections on the host port.
@@ -66,7 +66,7 @@ type Client struct {
 // ready.
 func Start(ctx context.Context, cfg Config) (_ *Client, mErr error) {
 	now := time.Now()
-	dockerCl, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv)
+	dockerCl, err := dockerClient.New(dockerClient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("create client: %w", err)
 	}
@@ -126,7 +126,7 @@ func (c *Client) GetContainerLogs() (logs string, mErr error) {
 	}
 	logsCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	logsR, err := c.docker.ContainerLogs(logsCtx, c.containerID, container.LogsOptions{
+	logsR, err := c.docker.ContainerLogs(logsCtx, c.containerID, dockerClient.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -167,7 +167,7 @@ func (c *Client) buildImage(ctx context.Context, cfg Config) (id string, mErr er
 	tarR := bytes.NewReader(tarBuf.Bytes())
 	slog.DebugContext(ctx, "wrote tar dockerfile into buffer")
 
-	opts := build.ImageBuildOptions{Dockerfile: "Dockerfile"}
+	opts := dockerClient.ImageBuildOptions{Dockerfile: "Dockerfile"}
 	resp, err := c.docker.ImageBuild(ctx, tarR, opts)
 	if err != nil {
 		return "", fmt.Errorf("build %s docker image: %w", cfg.Name, err)
@@ -228,6 +228,10 @@ func tarInitScript(tarW *tar.Writer, script string, tarName string) (mErr error)
 // runContainer creates and starts the container, publishing the database port
 // on an available host port.
 func (c *Client) runContainer(ctx context.Context, imageID string, cfg Config) (string, ports.Port, error) {
+	containerPort, err := network.ParsePort(cfg.Port)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse container port %q: %w", cfg.Port, err)
+	}
 	port, err := ports.FindAvailable()
 	if err != nil {
 		return "", 0, fmt.Errorf("find available port: %w", err)
@@ -235,23 +239,26 @@ func (c *Client) runContainer(ctx context.Context, imageID string, cfg Config) (
 	containerCfg := &container.Config{
 		Image:        imageID,
 		Env:          cfg.Env,
-		ExposedPorts: nat.PortSet{cfg.Port: struct{}{}},
+		ExposedPorts: network.PortSet{containerPort: struct{}{}},
 		Cmd:          cfg.Cmd,
 	}
 	hostCfg := &container.HostConfig{
-		PortBindings: nat.PortMap{
-			cfg.Port: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: strconv.Itoa(port)}},
+		PortBindings: network.PortMap{
+			containerPort: []network.PortBinding{{HostIP: netip.IPv4Unspecified(), HostPort: strconv.Itoa(port)}},
 		},
 		Tmpfs: cfg.Tmpfs,
 	}
-	resp, err := c.docker.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, "")
+	resp, err := c.docker.ContainerCreate(ctx, dockerClient.ContainerCreateOptions{
+		Config:     containerCfg,
+		HostConfig: hostCfg,
+	})
 	if err != nil {
 		return "", 0, fmt.Errorf("create container: %w", err)
 	}
 	containerID := resp.ID
 	slog.DebugContext(ctx, "created "+cfg.Name+" container",
 		slog.String("container_id", containerID), slog.Int("port", port))
-	if err := c.docker.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := c.docker.ContainerStart(ctx, containerID, dockerClient.ContainerStartOptions{}); err != nil {
 		return "", 0, fmt.Errorf("start container: %w", err)
 	}
 	slog.DebugContext(ctx, "started container", slog.String("container_id", containerID))
@@ -263,10 +270,10 @@ func (c *Client) Stop(ctx context.Context) error {
 	if c.containerID == "" {
 		return nil
 	}
-	if err := c.docker.ContainerStop(ctx, c.containerID, container.StopOptions{}); err != nil {
+	if _, err := c.docker.ContainerStop(ctx, c.containerID, dockerClient.ContainerStopOptions{}); err != nil {
 		return fmt.Errorf("stop container %s: %w", c.containerID, err)
 	}
-	err := c.docker.ContainerRemove(ctx, c.containerID, container.RemoveOptions{
+	_, err := c.docker.ContainerRemove(ctx, c.containerID, dockerClient.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		RemoveLinks:   false,
 		Force:         true,
