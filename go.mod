@@ -2,11 +2,11 @@ module github.com/mbark/pggen
 
 go 1.26.0
 
-toolchain go1.26.2
+toolchain go1.27.1
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
-	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0

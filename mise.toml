@@ -1,8 +1,8 @@
 # Tool versions for this repo, pinned to what CI installs so a local run and a
 # GitHub Actions run see the same compiler and linter.
 [tools]
-go = "1.26.2"              # matches the toolchain directive in go.mod
-golangci-lint = "v2.11.4"  # matches .github/workflows/go_lint.yaml
+go = "1.27.1"              # matches the toolchain directive in go.mod
+golangci-lint = "2.14.0"  # matches .github/workflows/go_lint.yaml
 
 [settings]
 experimental = true
