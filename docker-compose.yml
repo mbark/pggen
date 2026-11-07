@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: hunter2
 
   clickhouse:
-    image: "clickhouse/clickhouse-server:25.3"
+    image: "clickhouse/clickhouse-server:25.12"
     # 9010/8124 rather than the usual 9000/8123 so this container can coexist
     # with a ClickHouse another project already runs on the default ports.
     ports:
